@@ -1,7 +1,8 @@
 import net from 'node:net';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const [portArg, metricsPortArg, token, cliPath, home] = process.argv.slice(2);
 const PORT = Number(portArg || 37645);
@@ -222,6 +223,264 @@ function gitStatus(message) {
   proc.on('close', code => publish({ type: 'git_status', cwd, code: code ?? -1, stdout, stderr }));
 }
 
+
+const MAX_EDITOR_BYTES = 1024 * 1024;
+const MAX_CHECKPOINT_BYTES = 2 * 1024 * 1024;
+const CHECKPOINT_DIR = path.join(home, '.maomao', 'checkpoints');
+const GIT = '/data/data/com.termux/files/usr/bin/git';
+
+function hashBytes(data) {
+  return createHash('sha256').update(data).digest('hex');
+}
+function isInside(parent, target) {
+  const rel = path.relative(parent, target);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+function safeWorkspacePath(input, mustExist = true) {
+  if (typeof input !== 'string' || !input.trim()) throw new Error('A file path is required.');
+  const full = path.resolve(input.startsWith('/') ? input : path.join(currentCwd, input));
+  if (!isInside(home, full)) throw new Error('Path is outside the Termux home workspace.');
+  if (mustExist) {
+    const st = fs.lstatSync(full);
+    if (st.isSymbolicLink()) throw new Error('Symbolic links are not opened by the editor.');
+    const real = fs.realpathSync(full);
+    if (!isInside(home, real)) throw new Error('Resolved path is outside the workspace.');
+  } else {
+    const parent = fs.realpathSync(path.dirname(full));
+    if (!isInside(home, parent)) throw new Error('Parent directory is outside the workspace.');
+  }
+  return full;
+}
+function readFileForEditor(message) {
+  try {
+    const full = safeWorkspacePath(message.path, true);
+    const st = fs.statSync(full);
+    if (!st.isFile()) throw new Error('Only regular files can be opened in the editor.');
+    if (st.size > MAX_EDITOR_BYTES) throw new Error('File is larger than 1 MiB. Use the terminal for large files.');
+    const data = fs.readFileSync(full);
+    const content = data.toString('utf8');
+    if (content.includes('\uFFFD')) throw new Error('This file is not valid UTF-8 text and cannot be edited here.');
+    publish({ type: 'file_read_result', path: full, content, hash: hashBytes(data), size: st.size });
+  } catch (error) {
+    publish({ type: 'file_read_result', path: String(message.path || ''), error: error.message });
+  }
+}
+function loadCheckpoint(id) {
+  if (!/^[a-f0-9-]{16,64}$/i.test(String(id || ''))) throw new Error('Invalid checkpoint ID.');
+  const file = path.join(CHECKPOINT_DIR, String(id) + '.json');
+  if (!isInside(CHECKPOINT_DIR, file) || !fs.existsSync(file)) throw new Error('Checkpoint not found.');
+  return { file, data: JSON.parse(fs.readFileSync(file, 'utf8')) };
+}
+function saveCheckpoint(id, data) {
+  fs.mkdirSync(CHECKPOINT_DIR, { recursive: true, mode: 0o700 });
+  const file = path.join(CHECKPOINT_DIR, id + '.json');
+  const temp = file + '.tmp';
+  fs.writeFileSync(temp, JSON.stringify(data), { mode: 0o600 });
+  fs.renameSync(temp, file);
+}
+function createFileCheckpoint(fullPath, purpose) {
+  const existed = fs.existsSync(fullPath);
+  let original = Buffer.alloc(0);
+  if (existed) {
+    const st = fs.lstatSync(fullPath);
+    if (!st.isFile() || st.isSymbolicLink()) throw new Error('Checkpoint only supports regular files.');
+    if (st.size > MAX_EDITOR_BYTES) throw new Error('File is too large for a safe editor checkpoint.');
+    original = fs.readFileSync(fullPath);
+  }
+  const id = createHash('sha256').update(Date.now() + '-' + Math.random() + '-' + process.pid).digest('hex').slice(0, 32);
+  const data = {
+    id, purpose: String(purpose || 'file edit').slice(0, 80), createdAt: Date.now(), sealed: false,
+    entries: [{ path: fullPath, existed, beforeBase64: existed ? original.toString('base64') : null,
+      beforeHash: existed ? hashBytes(original) : null, afterHash: null }]
+  };
+  if (JSON.stringify(data).length > MAX_CHECKPOINT_BYTES) throw new Error('Checkpoint exceeds the 2 MiB safety limit.');
+  saveCheckpoint(id, data);
+  return id;
+}
+function writeFileFromEditor(message) {
+  try {
+    const proposed = String(message.path || '');
+    const existsAtStart = fs.existsSync(proposed);
+    const full = safeWorkspacePath(proposed, existsAtStart);
+    const exists = fs.existsSync(full);
+    const current = exists ? fs.readFileSync(full) : Buffer.alloc(0);
+    const actualHash = exists ? hashBytes(current) : 'NEW';
+    if (String(message.expectedHash || '') !== actualHash) {
+      publish({ type: 'file_write_result', path: full, error: 'File changed since it was opened. Reopen it before saving; no data was overwritten.', conflict: true });
+      return;
+    }
+    const content = String(message.content ?? '');
+    const data = Buffer.from(content, 'utf8');
+    if (data.length > MAX_EDITOR_BYTES) throw new Error('Editor content exceeds 1 MiB.');
+    if (content.includes('\u0000')) throw new Error('Binary data is not supported in the text editor.');
+    const id = createFileCheckpoint(full, 'Maomao editor save');
+    const temp = full + '.maomao-tmp-' + id;
+    fs.writeFileSync(temp, data, { mode: exists ? fs.statSync(full).mode : 0o600 });
+    fs.renameSync(temp, full);
+    const checkpoint = loadCheckpoint(id).data;
+    checkpoint.entries[0].afterHash = hashBytes(data);
+    checkpoint.sealed = true;
+    saveCheckpoint(id, checkpoint);
+    publish({ type: 'file_write_result', path: full, hash: hashBytes(data), checkpointId: id, size: data.length });
+  } catch (error) {
+    publish({ type: 'file_write_result', path: String(message.path || ''), error: error.message });
+  }
+}
+function checkpointPreview(message) {
+  try {
+    const loaded = loadCheckpoint(message.checkpointId);
+    const data = loaded.data;
+    const conflicts = [], restorable = [];
+    for (const entry of data.entries) {
+      const exists = fs.existsSync(entry.path);
+      const current = exists && fs.statSync(entry.path).isFile() ? fs.readFileSync(entry.path) : null;
+      const currentHash = current ? hashBytes(current) : 'NEW';
+      if (entry.afterHash && currentHash === entry.afterHash) restorable.push(entry.path);
+      else conflicts.push(entry.path);
+    }
+    publish({ type: 'checkpoint_preview_result', checkpointId: data.id, purpose: data.purpose, restorable, conflicts, safe: data.sealed && conflicts.length === 0 });
+  } catch (error) {
+    publish({ type: 'checkpoint_preview_result', checkpointId: message.checkpointId, error: error.message });
+  }
+}
+function restoreCheckpoint(message) {
+  try {
+    const loaded = loadCheckpoint(message.checkpointId);
+    const file = loaded.file, data = loaded.data;
+    const conflicts = [];
+    for (const entry of data.entries) {
+      const exists = fs.existsSync(entry.path);
+      const current = exists && fs.statSync(entry.path).isFile() ? fs.readFileSync(entry.path) : null;
+      const currentHash = current ? hashBytes(current) : 'NEW';
+      if (!entry.afterHash || currentHash !== entry.afterHash) conflicts.push(entry.path);
+    }
+    if (!data.sealed || conflicts.length) {
+      publish({ type: 'checkpoint_restore_result', checkpointId: data.id, restored: false, conflicts, error: 'Restore blocked: files changed after the checkpoint. Nothing was overwritten.' });
+      return;
+    }
+    for (const entry of data.entries) {
+      if (entry.existed) {
+        const original = Buffer.from(entry.beforeBase64 || '', 'base64');
+        const temp = entry.path + '.maomao-restore-' + data.id;
+        fs.writeFileSync(temp, original, { mode: 0o600 });
+        fs.renameSync(temp, entry.path);
+      } else {
+        fs.unlinkSync(entry.path);
+      }
+    }
+    fs.renameSync(file, file + '.restored');
+    publish({ type: 'checkpoint_restore_result', checkpointId: data.id, restored: true, conflicts: [] });
+  } catch (error) {
+    publish({ type: 'checkpoint_restore_result', checkpointId: message.checkpointId, restored: false, conflicts: [], error: error.message });
+  }
+}
+function gitRun(cwd, args, timeout = 120000) {
+  const result = spawnSync(GIT, ['-C', cwd, ...args], {
+    encoding: 'utf8', timeout, maxBuffer: 3 * 1024 * 1024,
+    env: { ...process.env, HOME: home, PREFIX: '/data/data/com.termux/files/usr',
+      PATH: '/data/data/com.termux/files/usr/bin:' + home + '/.local/bin:' + (process.env.PATH || '') }
+  });
+  return { code: result.status ?? (result.error ? 124 : 1),
+    stdout: String(result.stdout || '').slice(0, 256 * 1024),
+    stderr: String(result.stderr || (result.error && result.error.message) || '').slice(0, 32 * 1024) };
+}
+function gitRoot(cwd) {
+  const result = gitRun(cwd, ['rev-parse', '--show-toplevel'], 10000);
+  if (result.code !== 0) throw new Error(result.stderr || 'Not inside a Git repository.');
+  const root = fs.realpathSync(result.stdout.trim());
+  if (!isInside(home, root)) throw new Error('Git repository is outside the Termux home workspace.');
+  return root;
+}
+function hasDirtyGitTree(cwd) {
+  const result = gitRun(cwd, ['status', '--porcelain']);
+  if (result.code !== 0) throw new Error(result.stderr || 'Unable to read Git status.');
+  return result.stdout.trim().length > 0;
+}
+function runGitAction(message) {
+  const action = String(message.action || '');
+  let cwd = currentCwd;
+  try {
+    cwd = safeWorkspacePath(String(message.cwd || currentCwd), true);
+    gitRoot(cwd);
+    let result = { code: 0, stdout: '', stderr: '' };
+    if (action === 'status') {
+      result = gitRun(cwd, ['status', '--short', '--branch']);
+    } else if (action === 'branches') {
+      const current = gitRun(cwd, ['branch', '--show-current']);
+      const branches = gitRun(cwd, ['branch', '--format=%(refname:short)']);
+      result = { code: branches.code, stdout: JSON.stringify({ current: current.stdout.trim(), branches: branches.stdout.split('\n').map(x => x.trim()).filter(Boolean) }), stderr: branches.stderr };
+    } else if (action === 'diff') {
+      result = gitRun(cwd, ['diff', '--no-ext-diff', '--']);
+    } else if (action === 'create_branch') {
+      const name = String(message.name || '').trim();
+      if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$/.test(name) || name.includes('..') || name.endsWith('/')) throw new Error('Invalid branch name.');
+      result = gitRun(cwd, ['switch', '-c', name]);
+    } else if (action === 'switch_branch') {
+      if (message.confirmed !== true) throw new Error('Confirmation required before switching branch.');
+      if (hasDirtyGitTree(cwd)) throw new Error('Branch switch blocked: commit or back up your working-tree changes first.');
+      const name = String(message.name || '').trim();
+      if (!name || name.startsWith('-')) throw new Error('Invalid branch name.');
+      result = gitRun(cwd, ['switch', name]);
+    } else if (action === 'commit') {
+      if (message.confirmed !== true) throw new Error('Confirmation required before committing all changes.');
+      const msg = String(message.message || '').trim();
+      if (!msg) throw new Error('Commit message is required.');
+      result = gitRun(cwd, ['add', '-A']);
+      if (result.code === 0) result = gitRun(cwd, ['commit', '-m', msg]);
+    } else if (action === 'fetch') {
+      result = gitRun(cwd, ['fetch', '--all', '--prune']);
+    } else if (action === 'pull') {
+      if (message.confirmed !== true) throw new Error('Confirmation required before pulling changes.');
+      if (hasDirtyGitTree(cwd)) throw new Error('Pull blocked: commit or stash local changes first.');
+      result = gitRun(cwd, ['pull', '--ff-only']);
+    } else if (action === 'push') {
+      if (message.confirmed !== true) throw new Error('Confirmation required before pushing changes.');
+      result = gitRun(cwd, ['push']);
+    } else {
+      throw new Error('Unsupported Git action: ' + action);
+    }
+    publish({ type: 'git_result', action, cwd, code: result.code, stdout: result.stdout, stderr: result.stderr });
+  } catch (error) {
+    publish({ type: 'git_result', action, cwd, code: 2, stdout: '', stderr: error.message });
+  }
+}
+function buildRepositoryMap(message) {
+  const ignored = new Set(['.git', 'node_modules', '.gradle', 'build', 'dist', 'target', '.idea', '.next', 'vendor']);
+  const supported = /\.(kt|kts|java|js|mjs|cjs|ts|tsx|jsx|py|go|rs|swift|c|cc|cpp|h|hpp|rb|php|cs|scala|md)$/i;
+  const root = gitRoot(safeWorkspacePath(String(message.cwd || currentCwd), true));
+  const files = [], symbols = [];
+  let visited = 0;
+  function walk(dir, depth) {
+    if (depth > 14 || files.length >= 1800) return;
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (ignored.has(entry.name) || entry.name.startsWith('.maomao-')) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) { walk(full, depth + 1); continue; }
+      if (!entry.isFile() || !supported.test(entry.name)) continue;
+      visited++;
+      const rel = path.relative(root, full);
+      let stat;
+      try { stat = fs.statSync(full); } catch { continue; }
+      files.push({ path: rel, bytes: stat.size });
+      if (stat.size > 512 * 1024 || symbols.length >= 500) continue;
+      let source = '';
+      try { source = fs.readFileSync(full, 'utf8'); } catch { continue; }
+      const lines = source.split(/\r?\n/);
+      const pattern = /^\s*(?:export\s+)?(?:async\s+)?(?:abstract\s+)?(?:class|interface|type|enum|function|const|def|fn|struct|trait|object|fun|data\s+class|sealed\s+class)\s+([A-Za-z_$][\w$]*)/;
+      for (let i = 0; i < lines.length && symbols.length < 500; i++) {
+        const match = lines[i].match(pattern);
+        if (match) symbols.push({ name: match[1], path: rel, line: i + 1 });
+      }
+    }
+  }
+  walk(root, 0);
+  publish({ type: 'repo_map_result', root, fileCount: files.length, visited,
+    truncated: files.length >= 1800, files: files.slice(0, 400), symbols });
+}
+
 const server = net.createServer(socket => {
   socket.setNoDelay(true);
   let authenticated = false;
@@ -245,7 +504,13 @@ const server = net.createServer(socket => {
       case 'stop': if (child) child.kill('SIGTERM'); break;
       case 'terminal': runTerminal(message); break;
       case 'files_list': listFiles(message); break;
+      case 'file_read': readFileForEditor(message); break;
+      case 'file_write': writeFileFromEditor(message); break;
+      case 'checkpoint_preview': checkpointPreview(message); break;
+      case 'checkpoint_restore': restoreCheckpoint(message); break;
       case 'git_status': gitStatus(message); break;
+      case 'git_action': runGitAction(message); break;
+      case 'repo_map': buildRepositoryMap(message); break;
       default: publish({ type: 'bridge_error', message: `Unknown bridge action: ${message.type}` });
     }
   });
