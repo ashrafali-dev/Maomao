@@ -105,6 +105,8 @@ private fun MaomaoApp() {
     var editorError by remember { mutableStateOf<String?>(null) }
     var editorCheckpointId by remember { mutableStateOf<String?>(null) }
     var showFileEditor by remember { mutableStateOf(false) }
+    var editorSavedText by remember { mutableStateOf("") }
+    var pendingTerminalCommand by remember { mutableStateOf<String?>(null) }
     var gitOutput by remember { mutableStateOf("Open a Git repository to inspect status and manage branches.") }
     var gitBranches by remember { mutableStateOf<List<String>>(emptyList()) }
     var currentBranch by remember { mutableStateOf("") }
@@ -283,6 +285,7 @@ private fun MaomaoApp() {
                 } else {
                     editorPath = event.optString("path")
                     editorText = event.optString("content")
+                    editorSavedText = editorText
                     editorHash = event.optString("hash", "NEW")
                     editorError = null
                     editorCheckpointId = null
@@ -296,6 +299,7 @@ private fun MaomaoApp() {
                     toast = error
                 } else {
                     editorHash = event.optString("hash", editorHash)
+                    editorSavedText = editorText
                     editorCheckpointId = event.optString("checkpointId").takeIf { it.isNotBlank() && it != "null" }
                     editorError = null
                     toast = "File saved. A pre-save checkpoint is available for safe undo."
@@ -560,6 +564,10 @@ private fun MaomaoApp() {
                         onSelectFile = { name ->
                             val full = if (filesPath.endsWith('/')) filesPath + name else "$filesPath/$name"
                             bridge.send(BridgeProtocol.line("file_read", "path" to full))
+                        },
+                        onCreateFile = { name ->
+                            val full = if (filesPath.endsWith('/')) filesPath + name else "$filesPath/$name"
+                            editorPath = full; editorText = ""; editorSavedText = ""; editorHash = "NEW"; editorCheckpointId = null; editorError = null; showFileEditor = true
                         }
                     )
                     Page.GIT -> GitScreen(
@@ -579,11 +587,11 @@ private fun MaomaoApp() {
                         command = terminalCommand, output = terminalOutput, blocked = memory.ratio >= 0.88,
                         onCommand = { terminalCommand = it },
                         onRun = {
-                            if (terminalCommand.isNotBlank()) {
-                                bridge.send(JSONObject().apply {
-                                    put("type", "terminal"); put("id", UUID.randomUUID().toString())
-                                    put("command", terminalCommand); put("cwd", cwd)
-                                }.toString() + "\n")
+                            val command = terminalCommand.trim()
+                            val dangerous = Regex("(?i)(^|[;&|]\\s*)(rm|rmdir|mv|dd|mkfs|chmod|chown|shred)\\b|git\\s+(reset|clean|push\\s+--force|branch\\s+-D|checkout\\s+-f)").containsMatchIn(command)
+                            if (command.isNotBlank()) {
+                                if (dangerous) pendingTerminalCommand = command
+                                else bridge.send(BridgeProtocol.line("terminal", "id" to UUID.randomUUID().toString(), "command" to command, "cwd" to cwd))
                             }
                         }
                     )
@@ -606,7 +614,7 @@ private fun MaomaoApp() {
         if (showFileEditor && editorPath != null) {
             FileEditorDialog(
                 path = editorPath!!, content = editorText, error = editorError,
-                canUndo = editorCheckpointId != null,
+                canUndo = editorCheckpointId != null, dirty = editorText != editorSavedText,
                 onContent = { editorText = it },
                 onSave = {
                     bridge.send(BridgeProtocol.line(
@@ -618,7 +626,12 @@ private fun MaomaoApp() {
                         bridge.send(BridgeProtocol.line("checkpoint_preview", "checkpointId" to id))
                     }
                 },
-                onDismiss = { showFileEditor = false }
+                onDismiss = {
+                    if (editorText != editorSavedText) {
+                        editorError = "Unsaved changes were discarded when the editor closed."
+                    }
+                    showFileEditor = false
+                }
             )
         }
         if (showCheckpointPreview) {
@@ -639,6 +652,19 @@ private fun MaomaoApp() {
                     else TextButton(onClick = { showCheckpointPreview = false }) { Text("Close") }
                 },
                 dismissButton = { if (checkpointSafe) TextButton(onClick = { showCheckpointPreview = false }) { Text("Cancel") } }
+            )
+        }
+        if (pendingTerminalCommand != null) {
+            AlertDialog(
+                onDismissRequest = { pendingTerminalCommand = null },
+                title = { Text("Confirm potentially destructive command") },
+                text = { Text("This command may delete, overwrite, change permissions, or force-update repository state:\n\n" + pendingTerminalCommand + "\n\nRun it in your Termux user environment?") },
+                confirmButton = { TextButton(onClick = {
+                    val command = pendingTerminalCommand ?: return@TextButton
+                    bridge.send(BridgeProtocol.line("terminal", "id" to UUID.randomUUID().toString(), "command" to command, "cwd" to cwd))
+                    pendingTerminalCommand = null
+                }) { Text("Run command") } },
+                dismissButton = { TextButton(onClick = { pendingTerminalCommand = null }) { Text("Cancel") } }
             )
         }
         if (pendingGitAction != null) {
@@ -867,8 +893,9 @@ private fun MessageBubble(entry: ChatEntry) {
 @Composable
 private fun FilesScreen(
     path: String, entries: List<JSONObject>, error: String?,
-    onLoad: (String) -> Unit, onOpen: (String, Boolean) -> Unit, onSelectFile: (String) -> Unit
+    onLoad: (String) -> Unit, onOpen: (String, Boolean) -> Unit, onSelectFile: (String) -> Unit, onCreateFile: (String) -> Unit
 ) {
+    var newFileName by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("Workspace files", fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Text(path, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -876,6 +903,11 @@ private fun FilesScreen(
             TextButton(onClick = { onLoad(path) }) { Text("Refresh") }
             TextButton(onClick = { onLoad(SessionStore.DEFAULT_CWD) }) { Text("Termux home") }
             TextButton(onClick = { onLoad(java.io.File(path).parent ?: SessionStore.DEFAULT_CWD) }) { Text("Up") }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(newFileName, { newFileName = it }, Modifier.weight(1f), label = { Text("New file name") }, singleLine = true)
+            Spacer(Modifier.width(6.dp))
+            Button(onClick = { val name = newFileName.trim(); if (name.isNotBlank() && !name.contains("/") && name != "." && name != "..") { onCreateFile(name); newFileName = "" } }, enabled = newFileName.isNotBlank()) { Text("Create") }
         }
         Text("Tap a folder to browse or a text file to open the editor.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (error != null) StatusBanner(error, true)
@@ -901,7 +933,7 @@ private fun FilesScreen(
 
 @Composable
 private fun FileEditorDialog(
-    path: String, content: String, error: String?, canUndo: Boolean,
+    path: String, content: String, error: String?, canUndo: Boolean, dirty: Boolean,
     onContent: (String) -> Unit, onSave: () -> Unit, onUndo: () -> Unit, onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -915,6 +947,7 @@ private fun FileEditorDialog(
         text = {
             Column(Modifier.fillMaxWidth()) {
                 if (error != null) StatusBanner(error, true)
+                if (dirty) Text("Unsaved changes", color = Color(0xFFFFD6A2), fontSize = 11.sp)
                 OutlinedTextField(
                     value = content, onValueChange = onContent, modifier = Modifier.fillMaxWidth().heightIn(min = 280.dp, max = 520.dp),
                     minLines = 14, maxLines = 24, textStyle = androidx.compose.ui.text.TextStyle(
@@ -926,7 +959,7 @@ private fun FileEditorDialog(
                     fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 5.dp))
             }
         },
-        confirmButton = { TextButton(onClick = onSave) { Text("Save") } },
+        confirmButton = { TextButton(onClick = onSave, enabled = dirty) { Text("Save") } },
         dismissButton = {
             Row {
                 if (canUndo) TextButton(onClick = onUndo) { Text("Undo last save") }
