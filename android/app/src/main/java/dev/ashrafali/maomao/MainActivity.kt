@@ -430,8 +430,12 @@ private fun MaomaoApp() {
         }
         if (isRunning) {
             if (!prompt.isNullOrBlank()) {
-                bridge.send(BridgeProtocol.userMessage(prompt, currentSessionId))
-                addEntry("user", prompt)
+                val sent = bridge.send(BridgeProtocol.userMessage(prompt, currentSessionId))
+                if (sent.isSuccess) addEntry("user", prompt)
+                else {
+                    toast = "Could not send message to XINCLI: ${sent.exceptionOrNull()?.message ?: "bridge disconnected"}"
+                    status = "Message was not sent"
+                }
             }
             return
         }
@@ -456,8 +460,12 @@ private fun MaomaoApp() {
         }
         pendingPrompt = prompt
         if (!prompt.isNullOrBlank()) addEntry("user", prompt)
-        bridge.send(start.toString() + "\n")
-        if (session != null && prompt.isNullOrBlank()) status = "Restoring saved session…"
+        val sent = bridge.send(start.toString() + "\n")
+        if (sent.isFailure) {
+            pendingPrompt = null
+            toast = "Could not start XINCLI: ${sent.exceptionOrNull()?.message ?: "bridge disconnected"}"
+            status = "XINCLI was not started"
+        } else if (session != null && prompt.isNullOrBlank()) status = "Restoring saved session…"
     }
 
     fun sendGitAction(action: String, value: String = "", confirmed: Boolean = false) {
@@ -640,6 +648,18 @@ private fun MaomaoApp() {
                         onBaseUrl = { baseUrl = it; runtimePrefs.edit().putString("baseUrl", it).apply() },
                         onModel = { model = it; runtimePrefs.edit().putString("model", it).apply() },
                         onEffort = { effort = it; runtimePrefs.edit().putString("effort", it).apply() },
+                        onSave = {
+                            val savedKey = runCatching { ApiKeyVault.put(context, apiKey); true }.getOrDefault(false)
+                            runtimePrefs.edit()
+                                .putString("provider", provider)
+                                .putString("baseUrl", baseUrl.trim())
+                                .putString("model", model.trim())
+                                .putString("effort", effort)
+                                .putString("cwd", cwd.trim())
+                                .apply()
+                            if (savedKey) toast = "API settings saved securely on this device."
+                            else toast = "Could not save the API key. Check Android Keystore availability."
+                        },
                         onReconnect = { connectBridge() }
                     )
                 }
@@ -1113,7 +1133,7 @@ private fun SettingsScreen(
     connected: Boolean, termuxInstalled: Boolean,
     onCwd: (String) -> Unit, onProvider: (String) -> Unit, onApiKey: (String) -> Unit,
     onBaseUrl: (String) -> Unit, onModel: (String) -> Unit, onEffort: (String) -> Unit,
-    onReconnect: () -> Unit
+    onSave: () -> Unit, onReconnect: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Text("Settings", fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -1142,6 +1162,9 @@ private fun SettingsScreen(
             placeholder = { Text("Enter the model ID from your API provider") }, singleLine = true
         )
         Text("API key is stored encrypted on this device. Provider credentials are passed to XINCLI only when a new session starts.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+        Button(onClick = onSave, modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+            Text("Save API settings")
+        }
         Spacer(Modifier.height(8.dp))
         Text("Effort", fontWeight = FontWeight.SemiBold)
         Row(verticalAlignment = Alignment.CenterVertically) {
