@@ -2,7 +2,7 @@
 
 **Maomao** is a native Android companion UI for XINCLI running in Termux. Android owns the interface; Termux stays the only local execution runtime. No Alpine, Ubuntu, PRoot or second Linux distribution is installed.
 
-**Status:** early prototype (0.1.0), not a finished release. Source lives under [android/](android/); the complete phased checklist and explicit limits are in [ROADMAP.md](ROADMAP.md).
+**Status:** early prototype (0.2.0), not a finished release. Source lives under [android/](android/); the complete phased checklist and explicit limits are in [ROADMAP.md](ROADMAP.md).
 
 ## Included
 
