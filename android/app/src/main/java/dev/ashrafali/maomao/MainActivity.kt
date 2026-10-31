@@ -81,8 +81,11 @@ private fun MaomaoApp() {
     var isRunning by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
     var cwd by remember { mutableStateOf(SessionStore.DEFAULT_CWD) }
-    var model by remember { mutableStateOf("sonnet") }
-    var effort by remember { mutableStateOf("high") }
+    var provider by remember { mutableStateOf(runtimePrefs.getString("provider", "anthropic") ?: "anthropic") }
+    var apiKey by remember { mutableStateOf(ApiKeyVault.get(context)) }
+    var baseUrl by remember { mutableStateOf(runtimePrefs.getString("baseUrl", "") ?: "") }
+    var model by remember { mutableStateOf(runtimePrefs.getString("model", "") ?: "") }
+    var effort by remember { mutableStateOf(runtimePrefs.getString("effort", "high") ?: "high") }
     var pendingPrompt by remember { mutableStateOf<String?>(null) }
     var permission by remember { mutableStateOf<PermissionRequest?>(null) }
     var memory by remember { mutableStateOf(MemorySnapshot()) }
@@ -315,6 +318,9 @@ private fun MaomaoApp() {
             put("type", "start")
             put("cwd", session?.cwd ?: cwd)
             put("title", title)
+            put("provider", provider)
+            put("apiKey", apiKey)
+            put("baseUrl", baseUrl)
             put("model", model)
             put("effort", effort)
             if (session != null) put("sessionId", session.id)
@@ -456,9 +462,15 @@ private fun MaomaoApp() {
                         }
                     )
                     Page.SETTINGS -> SettingsScreen(
-                        cwd = cwd, model = model, effort = effort,
+                        cwd = cwd, provider = provider, apiKey = apiKey, baseUrl = baseUrl,
+                        model = model, effort = effort,
                         connected = connected, termuxInstalled = bridge.isTermuxInstalled(),
-                        onCwd = { cwd = it }, onModel = { model = it }, onEffort = { effort = it },
+                        onCwd = { cwd = it },
+                        onProvider = { provider = it; runtimePrefs.edit().putString("provider", it).apply() },
+                        onApiKey = { apiKey = it; ApiKeyVault.put(context, it) },
+                        onBaseUrl = { baseUrl = it; runtimePrefs.edit().putString("baseUrl", it).apply() },
+                        onModel = { model = it; runtimePrefs.edit().putString("model", it).apply() },
+                        onEffort = { effort = it; runtimePrefs.edit().putString("effort", it).apply() },
                         onReconnect = { connectBridge() }
                     )
                 }
@@ -711,25 +723,52 @@ private fun TerminalScreen(command: String, output: String, blocked: Boolean, on
 
 @Composable
 private fun SettingsScreen(
-    cwd: String, model: String, effort: String, connected: Boolean, termuxInstalled: Boolean,
-    onCwd: (String) -> Unit, onModel: (String) -> Unit, onEffort: (String) -> Unit, onReconnect: () -> Unit
+    cwd: String, provider: String, apiKey: String, baseUrl: String, model: String, effort: String,
+    connected: Boolean, termuxInstalled: Boolean,
+    onCwd: (String) -> Unit, onProvider: (String) -> Unit, onApiKey: (String) -> Unit,
+    onBaseUrl: (String) -> Unit, onModel: (String) -> Unit, onEffort: (String) -> Unit,
+    onReconnect: () -> Unit
 ) {
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
+    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Text("Settings", fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
-        Text("Runtime", fontWeight = FontWeight.SemiBold)
-        StatusBanner(if (termuxInstalled) "Termux installed" else "Termux not detected", !termuxInstalled)
-        StatusBanner(if (connected) "Local bridge connected" else "Bridge disconnected", !connected)
-        OutlinedTextField(cwd, onCwd, Modifier.fillMaxWidth(), label = { Text("Working directory") }, singleLine = true)
-        Button(onClick = onReconnect, modifier = Modifier.padding(vertical = 8.dp)) { Text("Reconnect bridge") }
-        HorizontalDivider(Modifier.padding(vertical = 10.dp))
-        Text("Model & effort", fontWeight = FontWeight.SemiBold)
-        OutlinedTextField(model, onModel, Modifier.fillMaxWidth(), label = { Text("Model alias / ID") }, singleLine = true)
+        Text("AI Models & Providers", fontWeight = FontWeight.SemiBold)
+        Text("Choose the API provider used when a new XINCLI session starts.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
+            listOf("anthropic" to "Anthropic", "openai" to "OpenAI", "openai-compatible" to "OpenAI-compatible").forEach { (id, label) ->
+                FilterChip(selected = provider == id, onClick = { onProvider(id) }, label = { Text(label) }, modifier = Modifier.padding(end = 5.dp))
+            }
+        }
+        OutlinedTextField(
+            value = apiKey, onValueChange = onApiKey, modifier = Modifier.fillMaxWidth(),
+            label = { Text("API Key") }, placeholder = { Text("Paste provider API key") },
+            singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+        )
+        OutlinedTextField(
+            value = baseUrl, onValueChange = onBaseUrl, modifier = Modifier.fillMaxWidth(),
+            label = { Text("Base URL (optional)") },
+            placeholder = { Text(if (provider == "anthropic") "https://api.anthropic.com" else "https://api.openai.com/v1") },
+            singleLine = true
+        )
+        OutlinedTextField(
+            value = model, onValueChange = onModel, modifier = Modifier.fillMaxWidth(),
+            label = { Text("Model ID (exact provider model name)") },
+            placeholder = { Text("Enter the model ID from your API provider") }, singleLine = true
+        )
+        Text("API key is stored encrypted on this device. Provider credentials are passed to XINCLI only when a new session starts.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+        Spacer(Modifier.height(8.dp))
+        Text("Effort", fontWeight = FontWeight.SemiBold)
         Row(verticalAlignment = Alignment.CenterVertically) {
             listOf("low", "medium", "high", "max").forEach { choice ->
                 FilterChip(selected = effort == choice, onClick = { onEffort(choice) }, label = { Text(choice) }, modifier = Modifier.padding(end = 4.dp))
             }
         }
+        HorizontalDivider(Modifier.padding(vertical = 10.dp))
+        Text("Runtime", fontWeight = FontWeight.SemiBold)
+        StatusBanner(if (termuxInstalled) "Termux installed" else "Termux not detected", !termuxInstalled)
+        StatusBanner(if (connected) "Local bridge connected" else "Bridge disconnected", !connected)
+        OutlinedTextField(cwd, onCwd, Modifier.fillMaxWidth(), label = { Text("Working directory") }, singleLine = true)
+        Button(onClick = onReconnect, modifier = Modifier.padding(vertical = 8.dp)) { Text("Reconnect bridge") }
         HorizontalDivider(Modifier.padding(vertical = 10.dp))
         Text("Permissions & safety", fontWeight = FontWeight.SemiBold)
         Text("Tool access stays approval-based. Maomao never adds --dangerously-skip-permissions automatically.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -748,4 +787,52 @@ private fun formatBytes(value: Long): String = when {
     value >= 1024L * 1024L -> "%.1f MB".format(value / 1024.0 / 1024.0)
     value >= 1024L -> "%.1f KB".format(value / 1024.0)
     else -> "$value B"
+}
+private object ApiKeyVault {
+    private const val PREFS = "maomao_secrets"
+    private const val KEY_ALIAS = "maomao_api_key_v1"
+
+    private fun secretKey(): java.security.Key {
+        val store = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        store.getKey(KEY_ALIAS, null)?.let { return it }
+        val generator = javax.crypto.KeyGenerator.getInstance(
+            android.security.keystore.KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore"
+        )
+        val spec = android.security.keystore.KeyGenParameterSpec.Builder(
+            KEY_ALIAS,
+            android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or android.security.keystore.KeyProperties.PURPOSE_DECRYPT
+        ).setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setRandomizedEncryptionRequired(true)
+            .build()
+        generator.init(spec)
+        return generator.generateKey()
+    }
+
+    fun put(context: android.content.Context, value: String) {
+        val prefs = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+        if (value.isBlank()) {
+            prefs.edit().remove("api_key").apply()
+            return
+        }
+        runCatching {
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, secretKey())
+            val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+            val combined = cipher.iv + encrypted
+            prefs.edit().putString("api_key", android.util.Base64.encodeToString(combined, android.util.Base64.NO_WRAP)).apply()
+        }
+    }
+
+    fun get(context: android.content.Context): String {
+        val encoded = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE).getString("api_key", null) ?: return ""
+        return runCatching {
+            val combined = android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP)
+            val iv = combined.copyOfRange(0, 12)
+            val encrypted = combined.copyOfRange(12, combined.size)
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, secretKey(), javax.crypto.spec.GCMParameterSpec(128, iv))
+            String(cipher.doFinal(encrypted), Charsets.UTF_8)
+        }.getOrDefault("")
+    }
 }
