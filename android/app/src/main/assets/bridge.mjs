@@ -524,7 +524,7 @@ function buildRepositoryMap(message) {
   const ignored = new Set(['.git', 'node_modules', '.gradle', 'build', 'dist', 'target', '.idea', '.next', 'vendor']);
   const supported = /\.(kt|kts|java|js|mjs|cjs|ts|tsx|jsx|py|go|rs|swift|c|cc|cpp|h|hpp|rb|php|cs|scala|md)$/i;
   const root = gitRoot(safeWorkspacePath(String(message.cwd || currentCwd), true));
-  const files = [], symbols = [];
+  const files = [], symbols = [], dependencyEdges = [];
   let visited = 0;
   function walk(dir, depth) {
     if (depth > 14 || files.length >= 1800) return;
@@ -540,21 +540,50 @@ function buildRepositoryMap(message) {
       const rel = path.relative(root, full);
       let stat;
       try { stat = fs.statSync(full); } catch { continue; }
-      files.push({ path: rel, bytes: stat.size });
-      if (stat.size > 512 * 1024 || symbols.length >= 500) continue;
+      const fileItem = { path: rel, bytes: stat.size, symbolCount: 0, importCount: 0 };
+      files.push(fileItem);
+      if (stat.size > 512 * 1024 || (symbols.length >= 500 && dependencyEdges.length >= 1200)) continue;
       let source = '';
       try { source = fs.readFileSync(full, 'utf8'); } catch { continue; }
       const lines = source.split(/\r?\n/);
-      const pattern = /^\s*(?:export\s+)?(?:async\s+)?(?:abstract\s+)?(?:class|interface|type|enum|function|const|def|fn|struct|trait|object|fun|data\s+class|sealed\s+class)\s+([A-Za-z_$][\w$]*)/;
-      for (let i = 0; i < lines.length && symbols.length < 500; i++) {
-        const match = lines[i].match(pattern);
-        if (match) symbols.push({ name: match[1], path: rel, line: i + 1 });
+      const symbolPattern = /^\s*(?:export\s+)?(?:async\s+)?(?:abstract\s+)?(?:class|interface|type|enum|function|const|def|fn|struct|trait|object|fun|data\s+class|sealed\s+class)\s+([A-Za-z_$][\w$]*)/;
+      const importPatterns = [
+        /^\s*import\s+.*?\s+from\s+['"]([^'"]+)['"]/,
+        /^\s*import\s+['"]([^'"]+)['"]/,
+        /^\s*from\s+([A-Za-z0-9_./-]+)\s+import\b/,
+        /\brequire\(\s*['"]([^'"]+)['"]\s*\)/,
+        /^\s*import\s+([A-Za-z0-9_.*]+);/
+      ];
+      for (let i = 0; i < lines.length; i++) {
+        const symbolMatch = lines[i].match(symbolPattern);
+        if (symbolMatch && symbols.length < 500) {
+          symbols.push({ name: symbolMatch[1], path: rel, line: i + 1 });
+          fileItem.symbolCount++;
+        }
+        if (dependencyEdges.length < 1200) {
+          for (const importPattern of importPatterns) {
+            const importMatch = lines[i].match(importPattern);
+            if (importMatch) {
+              dependencyEdges.push({ from: rel, to: importMatch[1], line: i + 1 });
+              fileItem.importCount++;
+              break;
+            }
+          }
+        }
       }
     }
   }
   walk(root, 0);
+  const keyFiles = files.map(item => {
+    const base = path.basename(item.path).toLowerCase();
+    let score = item.symbolCount * 3 + item.importCount;
+    if (['readme.md', 'package.json', 'settings.gradle.kts', 'build.gradle.kts', 'pyproject.toml', 'cargo.toml', 'go.mod'].includes(base)) score += 50;
+    if (/^(main|index|app|server|cli)\./i.test(base)) score += 20;
+    return { ...item, score };
+  }).sort((a, b) => b.score - a.score).slice(0, 40);
   publish({ type: 'repo_map_result', root, fileCount: files.length, visited,
-    truncated: files.length >= 1800, files: files.slice(0, 400), symbols });
+    truncated: files.length >= 1800 || dependencyEdges.length >= 1200,
+    files: files.slice(0, 400), symbols, dependencyEdges, keyFiles });
 }
 
 const server = net.createServer(socket => {
