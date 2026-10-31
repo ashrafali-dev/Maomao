@@ -229,6 +229,10 @@ try {
 } finally {
   if (socket && !socket.destroyed) socket.destroy();
   if (bridge && bridge.exitCode === null) bridge.kill('SIGTERM');
-  await new Promise(resolve => bridge.once('exit', resolve).unref?.());
+  await new Promise(resolve => {
+    if (bridge.exitCode !== null) return resolve();
+    bridge.once('exit', resolve);
+    setTimeout(resolve, 1500);
+  });
   fs.rmSync(home, { recursive: true, force: true });
 }
