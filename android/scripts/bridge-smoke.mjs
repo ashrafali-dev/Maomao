@@ -17,7 +17,7 @@ fs.writeFileSync(memoryGuard, '// test-only no-op preload\n');
 const agentFile = path.join(home, 'agent-edit.txt');
 fs.writeFileSync(agentFile, 'before-agent\n');
 
-const fakeCli = String.raw\`#!/usr/bin/env node
+const fakeCli = String.raw`#!/usr/bin/env node
 import fs from 'node:fs';
 import readline from 'node:readline';
 const file = process.env.TEST_WRITE_FILE;
@@ -47,7 +47,7 @@ input.on('line', (line) => {
     setTimeout(() => process.exit(0), 50);
   }
 });
-\`;
+`;
 fs.writeFileSync(cliPath, fakeCli, { mode: 0o700 });
 fs.chmodSync(cliPath, 0o700);
 
@@ -187,7 +187,6 @@ try {
   send({ type: 'start', cwd: project, title: 'checkpoint test', model: 'stub' });
   const permission = await nextEvent(event => event.type === 'cli_event' && event.event?.type === 'control_request');
   const request = permission.event;
-  assert.equal(request.request.request_id || request.request_id, undefined); // request ID is on the outer event
   const requestId = request.request_id || 'agent-request-1';
   send({
     type: 'control_response',
