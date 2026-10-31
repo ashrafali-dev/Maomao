@@ -70,6 +70,10 @@ const bridge = spawn(process.execPath, [bridgeScript, String(port), String(metri
   stdio: ['ignore', 'pipe', 'pipe']
 });
 let bridgeStderr = '';
+let bridgeStdout = '';
+let currentStep = 'boot';
+bridge.stdout.setEncoding('utf8');
+bridge.stdout.on('data', chunk => { bridgeStdout += chunk; });
 bridge.stderr.setEncoding('utf8');
 bridge.stderr.on('data', chunk => { bridgeStderr += chunk; });
 
@@ -94,7 +98,7 @@ function nextEvent(predicate, timeoutMs = 10000) {
     waiter.timer = setTimeout(() => {
       const i = waiters.indexOf(waiter);
       if (i >= 0) waiters.splice(i, 1);
-      reject(new Error('Timed out waiting for bridge event. stderr=' + bridgeStderr));
+      reject(new Error('Timed out waiting for bridge event at step=' + currentStep + '; queued=' + backlog.map(event => event.type + ':' + (event.action || event.event?.type || '')).join(',') + '; stdout=' + bridgeStdout + '; stderr=' + bridgeStderr));
     }, timeoutMs);
     waiters.push(waiter);
   });
@@ -201,10 +205,13 @@ try {
   assert.ok(Array.isArray(map.dependencyEdges));
 
   // XINCLI Write tool: snapshot before permission is forwarded, seal after tool_result.
+  currentStep = 'start stub CLI';
   send({ type: 'start', cwd: project, title: 'checkpoint test', model: 'stub' });
+  currentStep = 'wait for agent permission event';
   const permission = await nextEvent(event => event.type === 'cli_event' && event.event?.type === 'control_request');
   const request = permission.event;
   const requestId = request.request_id || 'agent-request-1';
+  currentStep = 'send agent tool approval';
   send({
     type: 'control_response',
     response: {
@@ -213,13 +220,17 @@ try {
       response: { behavior: 'allow', updatedInput: request.request.input, updatedPermissions: [] }
     }
   });
+  currentStep = 'wait for pre-edit checkpoint';
   const checkpointCreated = await nextEvent(event => event.type === 'agent_checkpoint_created');
+  currentStep = 'wait for sealed agent checkpoint';
   const checkpointSaved = await nextEvent(event => event.type === 'agent_checkpoint_saved');
   assert.equal(checkpointSaved.checkpointId, checkpointCreated.checkpointId);
   assert.equal(fs.readFileSync(agentFile, 'utf8'), 'after-agent\n');
+  currentStep = 'preview agent checkpoint';
   send({ type: 'checkpoint_preview', checkpointId: checkpointSaved.checkpointId });
   const agentPreview = await nextEvent(event => event.type === 'checkpoint_preview_result');
   assert.equal(agentPreview.safe, true);
+  currentStep = 'restore agent checkpoint';
   send({ type: 'checkpoint_restore', checkpointId: checkpointSaved.checkpointId });
   const agentRestore = await nextEvent(event => event.type === 'checkpoint_restore_result');
   assert.equal(agentRestore.restored, true);
