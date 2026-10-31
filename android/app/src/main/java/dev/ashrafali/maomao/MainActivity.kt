@@ -649,7 +649,7 @@ private fun MaomaoApp() {
                         onModel = { model = it; runtimePrefs.edit().putString("model", it).apply() },
                         onEffort = { effort = it; runtimePrefs.edit().putString("effort", it).apply() },
                         onSave = {
-                            val savedKey = runCatching { ApiKeyVault.put(context, apiKey); true }.getOrDefault(false)
+                            val savedKey = ApiKeyVault.put(context, apiKey)
                             runtimePrefs.edit()
                                 .putString("provider", provider)
                                 .putString("baseUrl", baseUrl.trim())
@@ -1218,19 +1218,19 @@ private object ApiKeyVault {
         return generator.generateKey()
     }
 
-    fun put(context: android.content.Context, value: String) {
+    fun put(context: android.content.Context, value: String): Boolean {
         val prefs = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
         if (value.isBlank()) {
             prefs.edit().remove("api_key").apply()
-            return
+            return true
         }
-        runCatching {
+        return runCatching {
             val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, secretKey())
             val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
             val combined = cipher.iv + encrypted
-            prefs.edit().putString("api_key", android.util.Base64.encodeToString(combined, android.util.Base64.NO_WRAP)).apply()
-        }
+            prefs.edit().putString("api_key", android.util.Base64.encodeToString(combined, android.util.Base64.NO_WRAP)).commit()
+        }.getOrDefault(false)
     }
 
     fun get(context: android.content.Context): String {
