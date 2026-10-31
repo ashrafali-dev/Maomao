@@ -191,7 +191,7 @@ try {
   fs.writeFileSync(path.join(project, 'changed.txt'), 'dirty\n');
   send({ type: 'git_action', action: 'pull', cwd: project, confirmed: true });
   const pullBlocked = await nextEvent(event => event.type === 'git_result' && event.action === 'pull');
-  assert.match(pullBlocked.stderr, /working tree is dirty/i);
+  assert.match(pullBlocked.stderr, /commit or stash local changes first/i);
 
   // Repository map includes files, symbols, key files and dependencies.
   send({ type: 'repo_map', cwd: project });
