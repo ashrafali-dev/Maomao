@@ -73,11 +73,11 @@ function forwardCliLine(line, streamName, processRef, partial = false) {
       if (typeof sessionId === 'string' && sessionId.length > 10) {
         currentSessionId = sessionId;
       }
-      publish({ type: 'cli_event', stream: streamName, event: parsed, raw: line, sessionId: currentSessionId });
+      publish({ type: 'cli_event', stream: streamName, event: parsed, raw: line, sessionId: currentSessionId, title: currentTitle, cwd: currentCwd });
       return;
     } catch { /* Plain text output is still surfaced below. */ }
   }
-  publish({ type: 'cli_event', stream: streamName, raw: line, partial, sessionId: currentSessionId });
+  publish({ type: 'cli_event', stream: streamName, raw: line, partial, sessionId: currentSessionId, title: currentTitle, cwd: currentCwd });
 }
 
 function startCli(message) {
