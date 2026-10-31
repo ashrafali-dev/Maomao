@@ -93,6 +93,68 @@ This is the persistent checklist for the whole project. Keep this file up to dat
 - [ ] Audit shell command execution, file path handling, symlinks, and workspace boundaries.
 - [ ] Document supported Termux versions and one-time configuration.
 
+## Explicit Settings specification — 10 sections
+
+These are the 10 settings areas promised in the original product plan. They are separate from the 70 implementation checklist items above. A section is not complete merely because its heading or a text field exists; each control must persist its value, affect the runtime, and have a test where practical. All ten sections are currently **incomplete** in the installed prototype.
+
+1. **AI Models & Providers**
+   - Provider profiles and provider selector (Anthropic, OpenAI, OpenAI-compatible/custom).
+   - API key, Base URL, exact model ID, and masked key reveal/hide.
+   - Test connection, model list/refresh, default model, per-project model.
+   - Effort, context/output limits, timeout, provider/model fallback, import/export profiles.
+
+2. **Permissions & Security**
+   - Permission mode and per-tool Allow / Ask / Deny controls.
+   - Project trust and allowed workspace paths.
+   - Shell command approval, dangerous-command safeguards, filesystem/network permissions.
+   - Secret storage, redaction in logs, permission history.
+
+3. **MCP Servers**
+   - Add/edit/remove server; stdio and HTTP/SSE transport configuration where supported by XINCLI.
+   - Command/arguments/environment or endpoint/headers.
+   - Enable/disable, connection test, server health/logs, per-tool allowlist.
+
+4. **Agents & Plugins**
+   - View, enable/disable, add and configure agents.
+   - Agent prompt, model assignment, tool permissions and worker limits.
+   - Plugin directories and plugin enable/disable.
+   - Skills and hooks discovery/configuration.
+
+5. **Workspace & Storage**
+   - Default workspace/current project and additional allowed directories.
+   - Project-level XINCLI configuration.
+   - Transcript/cache locations, storage usage, clear cache.
+   - Session retention and cleanup policy; recent project switching.
+
+6. **Terminal & Runtime**
+   - Termux connection/permission status, reconnect and health check.
+   - Node/XINCLI paths and detected versions.
+   - Runtime environment variables and launch arguments.
+   - Shell selection, background startup, retry policy, process/log controls.
+
+7. **Sessions & History**
+   - Search, resume, fork, rename, archive and delete.
+   - Session metadata, project/workspace filter and retention.
+   - Restore after process death without exposing CLI commands.
+
+8. **Debug & Diagnostics**
+   - Bridge and CLI health, process state and exit code.
+   - Runtime logs and export diagnostics.
+   - Heap/RSS/external memory timeline, active worker count and output-size warnings.
+   - Last checkpoint and crash/OOM details.
+
+9. **Appearance**
+   - System/light/dark theme.
+   - App language, text size, font and density.
+   - Code font, code wrapping and message layout.
+   - Animation/reduced-motion preference.
+
+10. **About & Updates**
+    - App and XINCLI versions.
+    - Check/download update and release notes/changelog.
+    - Open-source licences and acknowledgements.
+    - Privacy information, diagnostics and supported Termux requirements.
+
 ## Open-source product patterns used
 
 | Project | Pattern used in Maomao | What is not copied |
