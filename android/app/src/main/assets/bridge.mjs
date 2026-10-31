@@ -106,8 +106,24 @@ function startCli(message) {
   if (['low', 'medium', 'high', 'max'].includes(message.effort)) args.push('--effort', message.effort);
   args.push('--name', currentTitle);
 
+  const provider = String(message.provider || 'anthropic').toLowerCase();
+  const apiKey = typeof message.apiKey === 'string' ? message.apiKey.trim() : '';
+  const baseUrl = typeof message.baseUrl === 'string' ? message.baseUrl.trim() : '';
+  const providerEnv = {};
+  if (apiKey) {
+    if (provider === 'anthropic') providerEnv.ANTHROPIC_API_KEY = apiKey;
+    else if (provider === 'openai') providerEnv.OPENAI_API_KEY = apiKey;
+    else if (provider === 'openai-compatible') {
+      providerEnv.OPENAI_API_KEY = apiKey;
+      if (baseUrl) providerEnv.OPENAI_BASE_URL = baseUrl;
+    }
+  }
+  if (baseUrl && provider === 'anthropic') providerEnv.ANTHROPIC_BASE_URL = baseUrl;
+  if (baseUrl && provider === 'openai') providerEnv.OPENAI_BASE_URL = baseUrl;
+
   const env = {
     ...process.env,
+    ...providerEnv,
     HOME: home,
     PREFIX: '/data/data/com.termux/files/usr',
     PATH: `/data/data/com.termux/files/usr/bin:${home}/.local/bin:${process.env.PATH || ''}`,
