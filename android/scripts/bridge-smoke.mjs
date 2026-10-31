@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { spawn, execFileSync } from 'node:child_process';
-import { once } from 'node:events';
 
 const repoRoot = process.cwd();
 const bridgeScript = path.join(repoRoot, 'android/app/src/main/assets/bridge.mjs');
@@ -104,21 +103,39 @@ function send(message) {
   socket.write(JSON.stringify(message) + '\n');
 }
 try {
-  socket = net.createConnection({ host: '127.0.0.1', port });
-  socket.setEncoding('utf8');
-  let buffer = '';
-  socket.on('data', chunk => {
-    buffer += chunk;
-    let index;
-    while ((index = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, index);
-      buffer = buffer.slice(index + 1);
-      if (line.trim()) {
-        try { dispatch(JSON.parse(line)); } catch {}
+  async function connectWithRetry() {
+    const deadline = Date.now() + 10000;
+    let lastError = null;
+    while (Date.now() < deadline) {
+      const candidate = net.createConnection({ host: '127.0.0.1', port });
+      candidate.setEncoding('utf8');
+      let buffer = '';
+      candidate.on('data', chunk => {
+        buffer += chunk;
+        let index;
+        while ((index = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, index);
+          buffer = buffer.slice(index + 1);
+          if (line.trim()) {
+            try { dispatch(JSON.parse(line)); } catch {}
+          }
+        }
+      });
+      try {
+        await new Promise((resolve, reject) => {
+          candidate.once('connect', resolve);
+          candidate.once('error', reject);
+        });
+        return candidate;
+      } catch (error) {
+        lastError = error;
+        candidate.destroy();
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
-  });
-  await Promise.race([once(socket, 'connect'), new Promise((_, reject) => setTimeout(() => reject(new Error('Bridge did not listen. stderr=' + bridgeStderr)), 10000))]);
+    throw new Error('Bridge did not listen. Last error=' + (lastError?.message || 'unknown') + '. stderr=' + bridgeStderr);
+  }
+  socket = await connectWithRetry();
   send({ type: 'hello', token });
   await nextEvent(event => event.type === 'welcome');
 
