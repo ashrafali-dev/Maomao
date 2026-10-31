@@ -119,6 +119,8 @@ private fun MaomaoApp() {
     var pendingGitValue by remember { mutableStateOf("") }
     var repoMapFiles by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var repoMapSymbols by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var repoMapKeyFiles by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var repoMapDependencies by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var repoMapCount by remember { mutableStateOf(0) }
     var showRepoMap by remember { mutableStateOf(false) }
     var checkpointSafe by remember { mutableStateOf(false) }
@@ -335,8 +337,12 @@ private fun MaomaoApp() {
                 repoMapCount = event.optInt("fileCount")
                 val fa = event.optJSONArray("files")
                 val sa = event.optJSONArray("symbols")
+                val ka = event.optJSONArray("keyFiles")
+                val da = event.optJSONArray("dependencyEdges")
                 repoMapFiles = if (fa == null) emptyList() else (0 until fa.length()).mapNotNull { fa.optJSONObject(it) }
                 repoMapSymbols = if (sa == null) emptyList() else (0 until sa.length()).mapNotNull { sa.optJSONObject(it) }
+                repoMapKeyFiles = if (ka == null) emptyList() else (0 until ka.length()).mapNotNull { ka.optJSONObject(it) }
+                repoMapDependencies = if (da == null) emptyList() else (0 until da.length()).mapNotNull { da.optJSONObject(it) }
                 showRepoMap = true
             }
             "agent_checkpoint_created" -> {
@@ -718,14 +724,24 @@ private fun MaomaoApp() {
                 title = { Text("Repository Map · $repoMapCount files") },
                 text = {
                     Column(Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        Text("Key files", fontWeight = FontWeight.SemiBold)
+                        repoMapKeyFiles.take(30).forEach { item ->
+                            Text(item.optString("path") + " · score " + item.optInt("score") + " · symbols " + item.optInt("symbolCount"), fontSize = 11.sp)
+                        }
+                        Spacer(Modifier.height(8.dp))
                         Text("Key symbols", fontWeight = FontWeight.SemiBold)
-                        repoMapSymbols.take(120).forEach { item ->
+                        repoMapSymbols.take(100).forEach { item ->
                             Text(item.optString("name") + " · " + item.optString("path") + ":" + item.optInt("line"), fontSize = 11.sp)
                         }
                         Spacer(Modifier.height(8.dp))
-                        Text("Source files", fontWeight = FontWeight.SemiBold)
-                        repoMapFiles.take(100).forEach { item ->
-                            Text(item.optString("path") + " · " + formatBytes(item.optLong("bytes")), fontSize = 11.sp)
+                        Text("Import / dependency edges", fontWeight = FontWeight.SemiBold)
+                        repoMapDependencies.take(100).forEach { item ->
+                            Text(item.optString("from") + " → " + item.optString("to"), fontSize = 10.sp)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text("Source files (" + repoMapFiles.size + " shown)", fontWeight = FontWeight.SemiBold)
+                        repoMapFiles.take(80).forEach { item ->
+                            Text(item.optString("path") + " · " + formatBytes(item.optLong("bytes")), fontSize = 10.sp)
                         }
                     }
                 },
