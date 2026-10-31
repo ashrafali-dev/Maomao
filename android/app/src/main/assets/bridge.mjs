@@ -14,6 +14,7 @@ let currentSessionId = null;
 let currentCwd = home;
 let currentTitle = 'New chat';
 let lastExit = null;
+let currentMemoryLevel = 'normal';
 
 function publish(event) {
   const line = JSON.stringify(event);
@@ -132,6 +133,7 @@ function startCli(message) {
     lastExit = { code, signal, at: Date.now() };
     publish({ type: 'process_exit', code, signal, sessionId: currentSessionId, cwd: currentCwd, oomLikely: code === 134 || signal === 'SIGABRT' });
     if (child === processRef) child = null;
+    currentMemoryLevel = 'normal';
   });
 }
 
@@ -141,6 +143,10 @@ function writeToCli(message) {
     return;
   }
   if (message.type === 'input') {
+    if (currentMemoryLevel === 'critical') {
+      publish({ type: 'memory_guard_block', level: currentMemoryLevel, action: 'input', message: 'New prompt blocked because V8 heap usage is at the critical threshold. Stop or wait for memory to fall before continuing.' });
+      return;
+    }
     const line = JSON.stringify({
       type: 'user', session_id: currentSessionId || '',
       message: { role: 'user', content: String(message.content || '') },
@@ -158,6 +164,7 @@ function runTerminal(message) {
   const command = String(message.command || '').trim();
   const cwd = typeof message.cwd === 'string' && path.isAbsolute(message.cwd) ? message.cwd : currentCwd;
   const id = String(message.id || Date.now());
+  if (currentMemoryLevel === 'critical') return publish({ type: 'terminal_result', id, code: 75, stdout: '', stderr: 'Terminal command paused: V8 heap usage is at the critical threshold.' });
   if (!command) return publish({ type: 'terminal_result', id, code: 2, stdout: '', stderr: 'Command is empty.' });
   if (!fs.existsSync(cwd)) return publish({ type: 'terminal_result', id, code: 2, stdout: '', stderr: `Directory not found: ${cwd}` });
   const proc = spawn('/data/data/com.termux/files/usr/bin/sh', ['-lc', command], {
@@ -234,6 +241,7 @@ const metricsServer = net.createServer(socket => {
   parseLines(socket, message => {
     if (message.token !== token || message.type !== 'memory_metrics') return socket.destroy();
     delete message.token;
+    if (['normal', 'watch', 'high', 'critical'].includes(message.level)) currentMemoryLevel = message.level;
     publish(message);
   });
 });
