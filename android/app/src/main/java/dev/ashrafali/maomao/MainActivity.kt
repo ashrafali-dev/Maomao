@@ -104,6 +104,9 @@ private fun MaomaoApp() {
     var editorHash by remember { mutableStateOf("NEW") }
     var editorError by remember { mutableStateOf<String?>(null) }
     var editorCheckpointId by remember { mutableStateOf<String?>(null) }
+    var latestAgentCheckpointId by remember { mutableStateOf<String?>(null) }
+    var latestAgentCheckpointPath by remember { mutableStateOf<String?>(null) }
+    var activePreviewCheckpointId by remember { mutableStateOf<String?>(null) }
     var showFileEditor by remember { mutableStateOf(false) }
     var editorSavedText by remember { mutableStateOf("") }
     var pendingTerminalCommand by remember { mutableStateOf<String?>(null) }
@@ -336,7 +339,21 @@ private fun MaomaoApp() {
                 repoMapSymbols = if (sa == null) emptyList() else (0 until sa.length()).mapNotNull { sa.optJSONObject(it) }
                 showRepoMap = true
             }
+            "agent_checkpoint_created" -> {
+                toast = "Safety checkpoint created before approving agent file edit."
+            }
+            "agent_checkpoint_saved" -> {
+                latestAgentCheckpointId = event.optString("checkpointId").takeIf { it.isNotBlank() && it != "null" }
+                latestAgentCheckpointPath = event.optString("path").takeIf { it.isNotBlank() && it != "null" }
+                addEntry("activity", "Undo checkpoint saved for " + (latestAgentCheckpointPath ?: "agent file edit"))
+            }
+            "agent_checkpoint_error" -> {
+                val message = event.optString("message", "Agent file checkpoint failed.")
+                toast = message
+                addEntry("system", message)
+            }
             "checkpoint_preview_result" -> {
+                activePreviewCheckpointId = event.optString("checkpointId").takeIf { it.isNotBlank() && it != "null" }
                 checkpointSafe = event.optBoolean("safe")
                 val conflicts = event.optJSONArray("conflicts")
                 checkpointConflicts = if (conflicts == null) emptyList() else (0 until conflicts.length()).map { conflicts.optString(it) }
@@ -350,6 +367,8 @@ private fun MaomaoApp() {
                 toast = if (restored) "Undo completed. Original file content restored." else event.optString("error", "Undo blocked because the file changed.")
                 if (restored) {
                     editorCheckpointId = null
+                    if (activePreviewCheckpointId == latestAgentCheckpointId) { latestAgentCheckpointId = null; latestAgentCheckpointPath = null }
+                    activePreviewCheckpointId = null
                     editorPath?.let { bridge.send(BridgeProtocol.line("file_read", "path" to it)) }
                     bridge.send(BridgeProtocol.line("files_list", "path" to filesPath))
                 }
@@ -550,6 +569,13 @@ private fun MaomaoApp() {
                         },
                         resumeSession = currentSession?.takeIf { it.interrupted },
                         onResume = { session -> startOrResume(null, session) },
+                        latestCheckpointPath = latestAgentCheckpointPath,
+                        onPreviewCheckpoint = {
+                            latestAgentCheckpointId?.let {
+                                activePreviewCheckpointId = it
+                                bridge.send(BridgeProtocol.line("checkpoint_preview", "checkpointId" to it))
+                            }
+                        },
                         onStop = { bridge.send(BridgeProtocol.line("stop")) }
                     )
                     Page.FILES -> FilesScreen(
@@ -647,7 +673,7 @@ private fun MaomaoApp() {
                 },
                 confirmButton = {
                     if (checkpointSafe) TextButton(onClick = {
-                        editorCheckpointId?.let { bridge.send(BridgeProtocol.line("checkpoint_restore", "checkpointId" to it)) }
+                        activePreviewCheckpointId?.let { bridge.send(BridgeProtocol.line("checkpoint_restore", "checkpointId" to it)) }
                     }) { Text("Undo save") }
                     else TextButton(onClick = { showCheckpointPreview = false }) { Text("Close") }
                 },
@@ -809,7 +835,8 @@ private fun ChatScreen(
     entries: SnapshotStateList<ChatEntry>, input: String, onInput: (String) -> Unit,
     onSend: () -> Unit, isRunning: Boolean, connected: Boolean, memory: MemorySnapshot,
     memoryWarning: String?, permission: PermissionRequest?, onPermission: (Boolean) -> Unit,
-    resumeSession: ChatSession?, onResume: (ChatSession) -> Unit, onStop: () -> Unit
+    resumeSession: ChatSession?, onResume: (ChatSession) -> Unit,
+    latestCheckpointPath: String?, onPreviewCheckpoint: () -> Unit, onStop: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         if (!connected) StatusBanner("Termux bridge is disconnected. Tap the reconnect icon after completing Termux setup.", warning = true)
@@ -823,6 +850,17 @@ private fun ChatScreen(
             }
         }
         if (memoryWarning != null) StatusBanner(memoryWarning, warning = true)
+        if (latestCheckpointPath != null) {
+            Card(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Agent edit checkpoint saved", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                        Text(latestCheckpointPath, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = onPreviewCheckpoint) { Text("Review undo") }
+                }
+            }
+        }
         if (resumeSession != null && !isRunning) {
             Card(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
