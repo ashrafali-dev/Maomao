@@ -1,52 +1,49 @@
 # Maomao
 
-Maomao is a native Android companion UI for XINCLI running in Termux. Android owns the interface; Termux remains the local runtime. No Alpine, Ubuntu, PRoot, or extra Linux distribution is installed.
+**Maomao** is a native Android companion UI for XINCLI running in Termux. Android owns the interface; Termux stays the only local execution runtime. No Alpine, Ubuntu, PRoot or second Linux distribution is installed.
 
-**Status:** early prototype (0.1.0), not a finished release. The Android project snapshot is stored in `maomao-android-source.tar.gz`. GitHub Actions extracts it and runs the Android build/tests.
+**Status:** early prototype (0.1.0), not a finished release. The source code is browseable under [android/](android/), and a compressed source snapshot is also available as [maomao-android-source.tar.gz](maomao-android-source.tar.gz). The persistent feature checklist is [ROADMAP.md](ROADMAP.md).
 
 ## Included in this first implementation
 
-- Native Compose shell with Chat, Files, Git, Terminal and Settings tabs.
+- Kotlin + Jetpack Compose native shell with Chat, Files, Git, Terminal and Settings tabs.
 - Termux `RUN_COMMAND` launch path for a background local bridge.
 - Authenticated bridge restricted to `127.0.0.1`.
 - XINCLI structured `stream-json` input/output, session resume and fork.
-- Tool approval prompts; no automatic `--dangerously-skip-permissions`.
-- Local session metadata and chat cache, interrupted-session resume affordance.
-- V8 heap/RSS monitoring with 70%, 80% and 88% warning levels.
+- Native tool approval prompts; no automatic `--dangerously-skip-permissions`.
+- Local session metadata and chat cache, plus interrupted-session resume affordance.
+- V8 heap/RSS telemetry with warning levels at 70%, 80% and 88%.
 - Basic workspace listing, Git status and Termux command execution.
-- Full feature-by-feature checklist in [ROADMAP.md](ROADMAP.md).
+- Full phased checklist in [ROADMAP.md](ROADMAP.md).
 
-## Build locally
+## Build
 
-Download and extract `maomao-android-source.tar.gz` from this repository, then open the extracted folder in Android Studio (JDK 17, Android SDK 36). Or run:
+Open `android/` in Android Studio with JDK 17 and Android SDK 36, or run from the repository root:
 
 ```bash
-gradle :app:assembleDebug
-gradle :app:testDebugUnitTest
+gradle -p android :app:assembleDebug
+gradle -p android :app:testDebugUnitTest
 ```
 
-GitHub Actions runs the same checks for pushes and pull requests.
+GitHub Actions runs both checks for branch pushes and pull requests.
 
 ## One-time Termux setup
 
-Install Termux and Node.js, then install XINCLI with its own installer. In `~/.termux/termux.properties`, set:
+1. Install Termux and Node.js.
+2. Install your permitted XINCLI CLI copy in Termux (the CLI itself is not bundled here).
+3. In `~/.termux/termux.properties`, set `allow-external-apps = true`.
+4. Grant Maomao Android's **Run commands in Termux environment** permission.
 
-```properties
-allow-external-apps = true
-```
-
-Grant Maomao the Android **Run commands in Termux environment** permission. Android will not silently grant this permission.
+Android requires the user to grant the Termux command permission. Maomao does not silently bypass it.
 
 ## Safety and limits
 
-The bridge listens only on loopback and uses a random app token. The memory preload only reports metrics; it does not terminate XINCLI or claim to repair a memory leak. A crash recovery action resumes the saved session, but an interrupted tool operation must be checked before retrying. The terminal runs commands as the Termux user.
+The bridge listens only on loopback and uses a random app token. The memory preload reports process metrics; it does not kill XINCLI or claim to fix a memory leak. After a crash, the app offers to resume a saved session, but an interrupted tool operation must be checked before retrying. Terminal commands run with the Termux user's permissions.
 
-The XINCLI CLI source is not redistributed in this repository; install your own permitted copy in Termux.
+## Open-source inspiration
 
-## Open-source product inspiration
-
-- [Aider](https://github.com/Aider-AI/aider): repository map and test/repair loop ideas.
-- [Cline](https://github.com/cline/cline): human approval, checkpoints and undo direction.
+- [Aider](https://github.com/Aider-AI/aider): repository-map and automated test/repair ideas.
+- [Cline](https://github.com/cline/cline): human approvals, checkpoints and undo direction.
 - [Goose](https://github.com/block/goose): reusable recipes and task workflows.
 - [OpenHands](https://github.com/All-Hands-AI/OpenHands): separation of runtime, events and UI.
 
