@@ -1226,11 +1226,11 @@ private object ApiKeyVault {
 
 private object CodeSyntaxHighlight : androidx.compose.ui.text.input.VisualTransformation {
     private val keywords = Regex(
-        """\\b(class|interface|object|fun|val|var|private|public|protected|internal|override|suspend|return|if|else|when|for|while|do|try|catch|finally|throw|new|const|let|function|async|await|import|from|export|default|extends|implements|static|final|package|def|self|lambda|yield|match|case|struct|enum|trait|impl|pub|use|mod|fn|mut|go|defer|select|chan|range)\\b"""
+        """\b(class|interface|object|fun|val|var|private|public|protected|internal|override|suspend|return|if|else|when|for|while|do|try|catch|finally|throw|new|const|let|function|async|await|import|from|export|default|extends|implements|static|final|package|def|self|lambda|yield|match|case|struct|enum|trait|impl|pub|use|mod|fn|mut|go|defer|select|chan|range)\b"""
     )
-    private val strings = Regex(""""(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\x60(?:\\\\.|[^\x60\\\\])*\x60""")
-    private val numbers = Regex("""\\b\\d+(?:\\.\\d+)?\\b""")
-    private val comments = Regex("""//[^\\n]*|/\\*[\\s\\S]*?\\*/|(?m)^\\s*#.*$""")
+    private val strings = Regex("""("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')""")
+    private val numbers = Regex("""\b\d+(?:\.\d+)?\b""")
+    private val comments = Regex("""//[^\n]*|/\*[\s\S]*?\*/|(?m)^\s*#.*$""")
 
     override fun filter(text: androidx.compose.ui.text.AnnotatedString): androidx.compose.ui.text.input.TransformedText {
         val builder = androidx.compose.ui.text.AnnotatedString.Builder(text.text)
