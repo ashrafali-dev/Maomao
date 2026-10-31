@@ -128,6 +128,18 @@ private fun MaomaoApp() {
                 connected = true
                 connecting = false
                 status = "Connected to Termux"
+                val bridgeSessionId = event.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
+                if (bridgeSessionId != null) {
+                    currentSessionId = bridgeSessionId
+                    val saved = sessions.firstOrNull { it.id == bridgeSessionId }
+                    if (saved != null) {
+                        val restored = saved.copy(interrupted = !event.optBoolean("running"))
+                        currentSession = restored
+                        cwd = event.optString("cwd").takeIf { it.isNotBlank() && it != "null" } ?: restored.cwd
+                        if (entries.isEmpty()) entries.addAll(chatStore.load(bridgeSessionId))
+                        sessionStore.save(restored)
+                    }
+                }
                 if (event.optBoolean("running")) {
                     isRunning = true
                     runtimePrefs.edit().putBoolean("wasRunning", true).apply()
@@ -145,6 +157,14 @@ private fun MaomaoApp() {
                 if (id != null) {
                     val isNewSession = currentSessionId != id
                     currentSessionId = id
+                    val sessionTitle = event.optString("title").takeIf { it.isNotBlank() && it != "null" }
+                        ?: currentSession?.title ?: "New chat"
+                    val sessionCwd = event.optString("cwd").takeIf { it.isNotBlank() && it != "null" } ?: cwd
+                    currentSession = ChatSession(
+                        id = id, title = sessionTitle, cwd = sessionCwd,
+                        updatedAt = System.currentTimeMillis(), interrupted = false
+                    )
+                    cwd = sessionCwd
                     if (isNewSession && chatStore.load(id).isEmpty()) entries.forEach { chatStore.append(id, it) }
                     persistCurrent()
                 }
@@ -238,15 +258,23 @@ private fun MaomaoApp() {
         }
         scope.launch {
             delay(900)
-            val result = bridge.connect { raw ->
-                scope.launch(Dispatchers.Main) { processBridgeEvent(raw) }
+            var attempt = 0
+            var lastError = "connection closed"
+            while (attempt < 5) {
+                val result = bridge.connect { raw ->
+                    scope.launch(Dispatchers.Main) { processBridgeEvent(raw) }
+                }
+                connected = false
+                isRunning = false
+                lastError = result.exceptionOrNull()?.message ?: "connection closed"
+                attempt += 1
+                if (attempt >= 5) break
+                connecting = true
+                status = "Bridge disconnected · retry ${attempt}/4"
+                delay((1000L shl (attempt - 1)).coerceAtMost(8000L))
             }
-            connected = false
-            isRunning = false
             connecting = false
-            if (result.isFailure) {
-                status = "Bridge disconnected: ${result.exceptionOrNull()?.message ?: "unknown error"}"
-            }
+            status = "Bridge disconnected: $lastError"
         }
     }
 
