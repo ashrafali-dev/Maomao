@@ -1010,6 +1010,7 @@ private fun FileEditorDialog(
                     minLines = 14, maxLines = 24, textStyle = androidx.compose.ui.text.TextStyle(
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp
                     ),
+                    visualTransformation = CodeSyntaxHighlight,
                     placeholder = { Text("File content") }
                 )
                 Text("1 MiB text editing limit · SHA-256 conflict check · automatic pre-save checkpoint",
@@ -1051,6 +1052,10 @@ private fun GitScreen(
                 }
             }
         }
+        val changedCount = output.lineSequence().count { line ->
+            line.length >= 3 && !line.startsWith("##") && (line[0] in " MADRCU?!" || line[1] in " MADRCU?!")
+        }
+        Text("$changedCount changed path(s) in working tree", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             OutlinedTextField(newBranch, { newBranch = it }, Modifier.weight(1f), label = { Text("New branch") }, singleLine = true)
             Button(onClick = { val name = newBranch.trim(); if (name.isNotEmpty()) { onCreateBranch(name); newBranch = "" } }, enabled = newBranch.isNotBlank()) { Text("Create") }
@@ -1217,3 +1222,38 @@ private object ApiKeyVault {
         }.getOrDefault("")
     }
 }
+
+
+private object CodeSyntaxHighlight : androidx.compose.ui.text.input.VisualTransformation {
+    private val keywords = Regex(
+        """\\b(class|interface|object|fun|val|var|private|public|protected|internal|override|suspend|return|if|else|when|for|while|do|try|catch|finally|throw|new|const|let|function|async|await|import|from|export|default|extends|implements|static|final|package|def|self|lambda|yield|match|case|struct|enum|trait|impl|pub|use|mod|fn|mut|go|defer|select|chan|range)\\b"""
+    )
+    private val strings = Regex(""""(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\x60(?:\\\\.|[^\x60\\\\])*\x60""")
+    private val numbers = Regex("""\\b\\d+(?:\\.\\d+)?\\b""")
+    private val comments = Regex("""//[^\\n]*|/\\*[\\s\\S]*?\\*/|(?m)^\\s*#.*$""")
+
+    override fun filter(text: androidx.compose.ui.text.AnnotatedString): androidx.compose.ui.text.input.TransformedText {
+        val builder = androidx.compose.ui.text.AnnotatedString.Builder(text.text)
+        fun apply(pattern: Regex, color: Color, bold: Boolean = false) {
+            pattern.findAll(text.text).forEach { match ->
+                builder.addStyle(
+                    androidx.compose.ui.text.SpanStyle(
+                        color = color,
+                        fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal
+                    ),
+                    match.range.first,
+                    match.range.last + 1
+                )
+            }
+        }
+        apply(keywords, Color(0xFFC792EA), true)
+        apply(numbers, Color(0xFFF78C6C))
+        apply(strings, Color(0xFFC3E88D))
+        apply(comments, Color(0xFF7F8C98))
+        return androidx.compose.ui.text.input.TransformedText(
+            builder.toAnnotatedString(),
+            androidx.compose.ui.text.input.OffsetMapping.Identity
+        )
+    }
+}
+
