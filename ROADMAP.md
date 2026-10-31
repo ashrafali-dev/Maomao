@@ -36,7 +36,8 @@ This is the persistent checklist for the whole project. Keep this file up to dat
 - [x] Save session ID, title, workspace path, and last activity in app-private storage.
 - [ ] Add atomic checkpoint records for current task, phase, active worker IDs, changed files, and last confirmed operation.
 - [ ] Add file-system recovery check before retrying an interrupted tool action.
-- [ ] Add safe pause/stop controls for high-memory sessions.
+- [x] Block new user prompts and terminal commands at the 88% critical heap threshold (never force-kill an in-flight CLI task).
+- [ ] Add safe pause/stop controls for high-memory sessions and worker-aware graceful yielding.
 - [ ] Add device-adaptive agent concurrency governor; do not assume a fixed RAM size.
 - [ ] Add bounded output readers, truncation previews, and large-file streaming.
 - [ ] Add diagnostics view with memory timeline, worker count, large tool output warnings, exit code, and last checkpoint.
