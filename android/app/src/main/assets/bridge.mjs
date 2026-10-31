@@ -247,7 +247,7 @@ function gitStatus(message) {
   let cwd = currentCwd;
   try { cwd = safeWorkspacePath(typeof message.cwd === 'string' ? message.cwd : currentCwd, true); }
   catch (error) { publish({ type: 'git_status', cwd: currentCwd, code: 2, stdout: '', stderr: error.message }); return; }
-  const proc = spawn('/data/data/com.termux/files/usr/bin/git', ['-C', cwd, 'status', '--short', '--branch'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn(GIT, ['-C', cwd, 'status', '--short', '--branch'], { stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '', stderr = '';
   proc.stdout.setEncoding('utf8'); proc.stderr.setEncoding('utf8');
   proc.stdout.on('data', x => { stdout += x; }); proc.stderr.on('data', x => { stderr += x; });
@@ -258,7 +258,7 @@ function gitStatus(message) {
 const MAX_EDITOR_BYTES = 1024 * 1024;
 const MAX_CHECKPOINT_BYTES = 2 * 1024 * 1024;
 const CHECKPOINT_DIR = path.join(home, '.maomao', 'checkpoints');
-const GIT = '/data/data/com.termux/files/usr/bin/git';
+const GIT = process.env.MAOMAO_GIT_BIN || '/data/data/com.termux/files/usr/bin/git';
 
 function hashBytes(data) {
   return createHash('sha256').update(data).digest('hex');
