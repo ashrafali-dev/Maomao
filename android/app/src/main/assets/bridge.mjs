@@ -228,8 +228,9 @@ function runTerminal(message) {
 }
 
 function listFiles(message) {
-  const dir = typeof message.path === 'string' && path.isAbsolute(message.path) ? message.path : currentCwd;
+  let dir = currentCwd;
   try {
+    dir = safeWorkspacePath(typeof message.path === 'string' ? message.path : currentCwd, true);
     const entries = fs.readdirSync(dir, { withFileTypes: true }).slice(0, 500).map(entry => {
       const full = path.join(dir, entry.name);
       let size = 0, modified = 0;
@@ -243,7 +244,9 @@ function listFiles(message) {
 }
 
 function gitStatus(message) {
-  const cwd = typeof message.cwd === 'string' && path.isAbsolute(message.cwd) ? message.cwd : currentCwd;
+  let cwd = currentCwd;
+  try { cwd = safeWorkspacePath(typeof message.cwd === 'string' ? message.cwd : currentCwd, true); }
+  catch (error) { publish({ type: 'git_status', cwd: currentCwd, code: 2, stdout: '', stderr: error.message }); return; }
   const proc = spawn('/data/data/com.termux/files/usr/bin/git', ['-C', cwd, 'status', '--short', '--branch'], { stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '', stderr = '';
   proc.stdout.setEncoding('utf8'); proc.stderr.setEncoding('utf8');
