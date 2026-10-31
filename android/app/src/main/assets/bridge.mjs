@@ -195,8 +195,18 @@ function writeToCli(message) {
     if (allow && requestId) {
       const prepared = approvedFilesystemTool(requestId);
       if (!prepared.ok) {
+        pendingToolRequests.delete(String(requestId));
         publish({ type: 'agent_checkpoint_error', message: prepared.reason, requestId });
         publish({ type: 'bridge_error', message: prepared.reason });
+        // Fail closed, but always answer the pending CLI request so the agent cannot hang.
+        child.stdin.write(JSON.stringify({
+          type: 'control_response',
+          response: {
+            subtype: 'success',
+            request_id: requestId,
+            response: { behavior: 'deny', message: prepared.reason }
+          }
+        }) + '\n');
         return;
       }
     }
