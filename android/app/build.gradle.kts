@@ -31,7 +31,9 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
-    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    // Compose 1.12.x requires AGP 9.1.1 and compileSdk 37.
+    // Keep this app on the API 36 / AGP 8.13 toolchain for now.
+    implementation(platform("androidx.compose:compose-bom:2026.06.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
