@@ -45,16 +45,26 @@ This is the persistent checklist for the whole project. Keep this file up to dat
 
 ## Phase 3 — Workspace and Git tools
 
-- [x] Add basic Termux workspace file listing.
-- [x] Add basic Git working-tree status.
-- [x] Add simple native command terminal.
-- [ ] Add file preview, code viewer, and editor.
-- [ ] Add diff viewer and changed-file summary.
-- [ ] Add branch list, switch, create, commit, fetch, pull, and push controls.
-- [ ] Add explicit confirmation for destructive Git actions and commands.
-- [ ] Add Shadow-Git-style checkpoint/undo mechanism before agent edits.
-- [ ] Add rollback preview and conflict-safe restore.
-- [ ] Add repository map (symbol index, imports, key files, and dependency graph) inspired by Aider.
+- [x] Add Termux workspace file listing with home-directory path confinement and symlink rejection.
+- [x] Add Git working-tree status and changed-path count.
+- [x] Add native Termux command terminal.
+- [x] Add UTF-8 text file preview/editor with monospaced syntax highlighting, create-file flow, and 1 MiB edit cap.
+- [x] Add SHA-256 optimistic conflict check so stale editor content cannot silently overwrite a changed file.
+- [x] Add Git diff viewer (staged and unstaged tracked changes) plus changed-path summary from Git status.
+- [x] Add local branch list, create, switch, commit, fetch, pull (--ff-only), and push.
+- [x] Add confirmation dialogs for commit, switch, pull, push, and pattern-detected destructive terminal commands.
+- [x] Add per-file pre-save checkpoints and pre-approval checkpoints for XINCLI Write/Edit-family file tools.
+- [x] Add checkpoint preview, hash conflict detection, and atomic conflict-safe restore.
+- [x] Add repository map with key-file ranking, symbols, imports, and dependency edges.
+- [x] Add bridge integration smoke tests for editor, stale-write protection, undo, path confinement, Git actions, repository map, and agent file-write checkpointing.
+
+### Phase 3 scope limits (explicit)
+
+- The editor handles regular UTF-8 text files up to 1 MiB; binary and larger files are rejected. Syntax highlighting is lightweight lexical highlighting, not a full language server.
+- Git diff shows tracked changes against HEAD. Untracked files appear in the status/changed-path count; their contents are not rendered as a unified diff yet. Remote fetch/pull/push need a configured Git remote and working Termux Git credentials.
+- Agent checkpoints cover recognized XINCLI Write/Edit/MultiEdit/NotebookEdit/CreateFile/FileWrite tool requests. Arbitrary Bash/shell side effects are not automatically reversible by this per-file checkpoint mechanism.
+- Destructive terminal-command detection is rule-based and can miss unusual shell indirection. Terminal commands still run with the Termux user's own permissions; review unfamiliar commands before execution.
+- Repository map is a bounded heuristic scan (up to 1,800 source files, 500 symbols, and 1,200 import edges), not a compiler-backed dependency graph.
 
 ## Phase 4 — Agent workflow and context management
 
