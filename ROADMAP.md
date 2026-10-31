@@ -1,95 +1,106 @@
 # Maomao implementation roadmap
 
-This is the persistent checklist. Keep it updated on every implementation change. A task is complete only when code and a test/build record exist.
+This is the persistent checklist for the whole project. Keep this file up to date in every implementation PR. Items are intentionally ordered by dependency and user impact; do not silently drop unfinished work.
 
 ## Product contract
-- [x] Native Kotlin + Jetpack Compose Android UI.
-- [x] Termux-only backend; no Alpine, Ubuntu, PRoot or second distro.
-- [x] Use Termux RUN_COMMAND so Termux need not be opened manually for every run.
-- [x] Keep XINCLI as the agent engine.
-- [x] Keep tool permissions user-controlled; never auto-enable dangerous permission bypass.
-- [ ] First-run Termux setup wizard and diagnostics.
 
-## Phase 1 — Runtime and chat
-- [x] Android project scaffold and GitHub Actions workflow.
-- [x] Authenticated Node bridge on 127.0.0.1 only.
-- [x] Launch XINCLI through Termux RUN_COMMAND.
-- [x] Structured stream-json stdin/stdout.
-- [x] Native chat and tool activity display.
-- [x] Session metadata and local chat cache.
-- [x] Resume by session ID and fork session.
-- [x] Allow once / Deny permission prompt.
-- [x] Memory telemetry and interrupted-session recovery affordance.
-- [ ] Reconnect retry/backoff and bridge health screen.
-- [ ] Complete parsing for all stream event variants.
-- [ ] Stop/cancel semantics and process cleanup.
+- [x] Native Android app UI (Kotlin + Jetpack Compose), not a terminal wrapper.
+- [x] Termux is the backend/runtime; no Alpine, Ubuntu, PRoot, or extra distro download.
+- [x] Use Termux `RUN_COMMAND` so the user does not have to manually open Termux for every run.
+- [x] Keep XINCLI as the execution engine; do not reimplement its agent engine.
+- [x] Keep tool permissions user-controlled; never enable `--dangerously-skip-permissions` by default.
+- [ ] Complete first-run Termux setup wizard and diagnostics.
 
-## Phase 2 — Memory and recovery
-- [x] Heap used/total/limit, RSS, external and array-buffer metrics.
-- [x] 70%, 80%, 88% memory warning levels.
-- [x] Read-only telemetry; monitor must not kill the CLI.
-- [x] Persist session ID, title, workspace and last activity.
-- [ ] Atomic task checkpoints: phase, worker IDs, changed files, last confirmed operation.
-- [ ] Inspect workspace before retrying interrupted tool actions.
-- [ ] Safe pause/stop controls during memory pressure.
-- [ ] Device-adaptive agent concurrency governor.
-- [ ] Bounded tool output, truncation preview and large-file streaming.
-- [ ] Diagnostic timeline: memory, workers, output sizes, exit status and checkpoint.
-- [ ] Low-RAM Android OOM tests.
+## Phase 1 — Native runtime and chat foundation
 
-## Phase 3 — Workspace and Git
-- [x] Basic Termux workspace listing.
-- [x] Basic Git status.
-- [x] Basic native terminal.
-- [ ] File preview, syntax-highlighted editor and save flow.
-- [ ] Diff viewer and changed-file summary.
-- [ ] Branch list/create/switch, commit, fetch, pull and push.
-- [ ] Confirm destructive Git operations.
-- [ ] Shadow-Git-style checkpoint/undo and rollback preview.
-- [ ] Aider-inspired repository map (symbols, imports, key files, dependency graph).
+- [x] Create Android app scaffold and GitHub Actions build workflow.
+- [x] Add authenticated loopback Node bridge, bound to `127.0.0.1` only.
+- [x] Launch XINCLI through Termux `RUN_COMMAND`.
+- [x] Use XINCLI structured `stream-json` input/output (`-p`, `--verbose`).
+- [x] Add native chat screen and display assistant/tool activity events.
+- [x] Add per-session local chat cache and session metadata index.
+- [x] Resume by session ID without showing CLI commands to the user.
+- [x] Add fork-session action so the original transcript is preserved.
+- [x] Add control-request approval UI (Allow once / Deny).
+- [x] Add memory telemetry using `process.memoryUsage()` and V8 heap limit.
+- [x] Add interrupted-session detection and safe resume affordance after a process crash.
+- [x] Add five-attempt exponential reconnect retry/backoff and restore the live session ID from the bridge handshake; explicit bridge health/diagnostic screen remains pending.
+- [ ] Parse all stream event variants, including tool results, partial messages, and elicitation.
+- [ ] Add reliable stop/cancel semantics and process cleanup UI.
 
-## Phase 4 — Agent and context workflow
-- [ ] OpenHands-inspired coordinator/worker task board.
-- [ ] Worker state, assignments, changed files, errors and completion.
-- [ ] Concurrency queue under memory pressure.
-- [ ] Context budget, compact/summarize and older-message recall.
-- [ ] Tool-output caps and duplicate-output detection.
-- [ ] Project memory and searchable chat recall.
-- [ ] Task plan with phases/checkpoints.
-- [ ] Goose-inspired reusable workflow recipes.
-- [ ] Aider-inspired automatic test/lint/repair loop.
+## Phase 2 — Memory safety and crash recovery
+
+- [x] Track heap used, heap total, V8 heap limit, RSS, external memory, and array buffers.
+- [x] Warn at 70%, 80%, and 88% of the V8 heap limit (watch/high/critical).
+- [x] Keep memory instrumentation read-only; it must never terminate the CLI on its own.
+- [x] Save session ID, title, workspace path, and last activity in app-private storage.
+- [ ] Add atomic checkpoint records for current task, phase, active worker IDs, changed files, and last confirmed operation.
+- [ ] Add file-system recovery check before retrying an interrupted tool action.
+- [ ] Add safe pause/stop controls for high-memory sessions.
+- [ ] Add device-adaptive agent concurrency governor; do not assume a fixed RAM size.
+- [ ] Add bounded output readers, truncation previews, and large-file streaming.
+- [ ] Add diagnostics view with memory timeline, worker count, large tool output warnings, exit code, and last checkpoint.
+- [ ] Add crash/OOM instrumentation tests on a real low-RAM Android device.
+
+## Phase 3 — Workspace and Git tools
+
+- [x] Add basic Termux workspace file listing.
+- [x] Add basic Git working-tree status.
+- [x] Add simple native command terminal.
+- [ ] Add file preview, code viewer, and editor.
+- [ ] Add diff viewer and changed-file summary.
+- [ ] Add branch list, switch, create, commit, fetch, pull, and push controls.
+- [ ] Add explicit confirmation for destructive Git actions and commands.
+- [ ] Add Shadow-Git-style checkpoint/undo mechanism before agent edits.
+- [ ] Add rollback preview and conflict-safe restore.
+- [ ] Add repository map (symbol index, imports, key files, and dependency graph) inspired by Aider.
+
+## Phase 4 — Agent workflow and context management
+
+- [ ] Add native task board for coordinator/worker agents inspired by OpenHands.
+- [ ] Show worker state, assigned task, changed files, errors, and completion events.
+- [ ] Add worker concurrency policy and queueing under memory pressure.
+- [ ] Add context budget monitor, compact/summarize controls, and older-message recall.
+- [ ] Add tool-output size caps and duplicate-output detection.
+- [ ] Add project-level memory and searchable chat recall.
+- [ ] Add task plans with phases and checkpoints.
+- [ ] Add Goose-style reusable workflow recipes for common developer tasks.
+- [ ] Add automatic test, lint, and repair loop inspired by Aider.
 
 ## Phase 5 — Native feature coverage
-- [ ] Searchable session browser, rename, archive, delete, fork.
-- [ ] Full code/file explorer and preview/edit modes.
-- [ ] Multiple named terminals and terminal history.
-- [ ] GitHub repositories, branches, commits, PRs and CI checks.
-- [ ] Model/provider, effort and fallback settings.
-- [ ] MCP, plugins, agents, skills and hooks screens.
-- [ ] CLI/project config editor.
-- [ ] Slash-command autocomplete and native adapters for local JSX commands.
-- [ ] Command palette and keyboard shortcuts.
-- [ ] Long-task notifications and foreground-service handling.
 
-## Phase 6 — Reliability and release
-- [ ] Protocol, auth, malformed-frame, reconnect and replay tests.
-- [ ] Gradle lint and dependency verification.
-- [ ] Android instrumentation and accessibility tests.
-- [ ] Release signing via GitHub secrets only.
-- [ ] Versioned APK artifacts and release notes.
-- [ ] Privacy review and secret redaction.
-- [ ] Shell/path/symlink/workspace security audit.
-- [ ] Supported Termux version/setup documentation.
+- [ ] Add session browser with search, rename, archive, delete, and branch/fork controls.
+- [ ] Add code/file explorer with syntax highlighting and edit/preview modes.
+- [ ] Add terminal history and multiple named terminals.
+- [ ] Add full GitHub manager (repositories, branches, commits, PRs, checks).
+- [ ] Add model/provider selector, effort controls, and fallback settings.
+- [ ] Add MCP server management, plugin/agent management, skills, and hooks UI.
+- [ ] Add settings editor for CLI config and project-level config.
+- [ ] Add slash-command autocomplete and native adapters for local JSX commands.
+- [ ] Add command palette and keyboard shortcuts for tablets/keyboards.
+- [ ] Add task notifications and foreground-service handling for long jobs.
 
-## Open-source inspiration matrix
+## Phase 6 — Reliability, release, and security
 
-| Source | Pattern to adapt | Status |
+- [ ] Add full protocol contract tests between Kotlin and the Node bridge.
+- [ ] Add bridge authentication, malformed-frame, reconnect, and replay-buffer tests.
+- [ ] Add Gradle lint and dependency verification.
+- [ ] Add Android instrumentation tests and accessibility checks.
+- [ ] Add release signing configuration via GitHub secrets (never commit signing keys).
+- [ ] Add APK artifact publishing and versioned release notes.
+- [ ] Add privacy review: local-only bridge, no analytics by default, secrets redaction.
+- [ ] Audit shell command execution, file path handling, symlinks, and workspace boundaries.
+- [ ] Document supported Termux versions and one-time configuration.
+
+## Open-source product patterns used
+
+| Project | Pattern used in Maomao | What is not copied |
 |---|---|---|
-| Aider | Repository map; test/repair loop | Planned |
-| Cline | Permission prompts; checkpoint/undo | Approval UI started; undo planned |
-| Goose | Recipes and task workflows | Planned |
-| OpenHands | Runtime/UI separation; worker task board | Bridge/UI split started; task board planned |
+| Aider | Repository map, test/repair loop ideas | Aider source or agent implementation |
+| Cline | Human approval, checkpoint/undo direction | Cline source or VS Code extension UI |
+| Goose | Reusable workflow recipes | Goose source or runtime |
+| OpenHands | Runtime/UI boundary, task board and worker visibility | OpenHands source or cloud execution backend |
 
-## Current implementation boundary
+## Acceptance rule
 
-Implemented items are early/basic versions. The roadmap deliberately leaves unimplemented items unchecked. Do not describe Maomao as feature-complete until the acceptance tests pass.
+An item is marked complete only when its implementation exists in the repo and its test/build status is recorded. A UI placeholder or roadmap paragraph alone does not count as implementation.
