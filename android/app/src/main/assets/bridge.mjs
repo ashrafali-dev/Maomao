@@ -190,7 +190,7 @@ function writeToCli(message) {
   }
   if (message.type === 'control_response' && message.response) {
     const response = message.response?.response;
-    const requestId = response?.request_id;
+    const requestId = message.response?.request_id || response?.request_id;
     const allow = response?.behavior === 'allow';
     if (allow && requestId) {
       const prepared = approvedFilesystemTool(requestId);
