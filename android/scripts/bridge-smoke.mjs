@@ -39,7 +39,7 @@ input.on('line', (line) => {
   try { message = JSON.parse(line); } catch { return; }
   const decision = message.response && message.response.response && message.response.response.behavior;
   if (message.type === 'control_response' && decision === 'allow') {
-    fs.writeFileSync(file, 'after-agent\\n');
+    fs.writeFileSync(file, 'after-agent\n');
     console.log(JSON.stringify({
       type: 'user',
       message: { content: [{ type: 'tool_result', tool_use_id: 'agent-tool-use-1', content: 'saved' }] }
