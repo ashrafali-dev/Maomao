@@ -20,6 +20,7 @@ const fakeCli = String.raw`#!/usr/bin/env node
 import fs from 'node:fs';
 import readline from 'node:readline';
 const file = process.env.TEST_WRITE_FILE;
+console.error('FAKE_XINCLI_STARTED', file);
 console.log(JSON.stringify({
   type: 'control_request',
   request_id: 'agent-request-1',
@@ -31,6 +32,7 @@ console.log(JSON.stringify({
     description: 'Write a file'
   }
 }));
+console.error('FAKE_XINCLI_PERMISSION_SENT');
 const input = readline.createInterface({ input: process.stdin });
 input.on('line', (line) => {
   let message;
@@ -98,7 +100,7 @@ function nextEvent(predicate, timeoutMs = 10000) {
     waiter.timer = setTimeout(() => {
       const i = waiters.indexOf(waiter);
       if (i >= 0) waiters.splice(i, 1);
-      reject(new Error('Timed out waiting for bridge event at step=' + currentStep + '; queued=' + backlog.map(event => event.type + ':' + (event.action || event.event?.type || '')).join(',') + '; stdout=' + bridgeStdout + '; stderr=' + bridgeStderr));
+      reject(new Error('Timed out waiting for bridge event at step=' + currentStep + '; queued=' + JSON.stringify(backlog.map(event => ({ type: event.type, stream: event.stream, subtype: event.event?.type, code: event.code, raw: String(event.raw || '').slice(0, 200), stderr: event.stderr }))) + '; stdout=' + bridgeStdout + '; stderr=' + bridgeStderr));
     }, timeoutMs);
     waiters.push(waiter);
   });
