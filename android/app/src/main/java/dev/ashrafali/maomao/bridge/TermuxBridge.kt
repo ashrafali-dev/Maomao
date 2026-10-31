@@ -59,6 +59,7 @@ class TermuxBridge(private val context: Context) {
             putExtra("com.termux.RUN_COMMAND_DESCRIPTION", "Starts the local-only Maomao to XINCLI bridge")
         }
         context.startService(intent)
+        Unit
     }
 
     suspend fun connect(onEvent: (String) -> Unit): Result<Unit> = withContext(Dispatchers.IO) {
