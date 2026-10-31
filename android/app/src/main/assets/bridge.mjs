@@ -402,15 +402,21 @@ function writeFileFromEditor(message) {
     publish({ type: 'file_write_result', path: String(message.path || ''), error: error.message });
   }
 }
+function checkpointCurrentHash(filePath) {
+  if (!fs.existsSync(filePath)) return 'NEW';
+  const st = fs.lstatSync(filePath);
+  if (st.isSymbolicLink()) return 'SYMLINK';
+  if (!st.isFile()) return 'NOT_FILE';
+  return hashBytes(fs.readFileSync(filePath));
+}
+
 function checkpointPreview(message) {
   try {
     const loaded = loadCheckpoint(message.checkpointId);
     const data = loaded.data;
     const conflicts = [], restorable = [];
     for (const entry of data.entries) {
-      const exists = fs.existsSync(entry.path);
-      const current = exists && fs.statSync(entry.path).isFile() ? fs.readFileSync(entry.path) : null;
-      const currentHash = current ? hashBytes(current) : 'NEW';
+      const currentHash = checkpointCurrentHash(entry.path);
       if (entry.afterHash && currentHash === entry.afterHash) restorable.push(entry.path);
       else conflicts.push(entry.path);
     }
@@ -425,9 +431,7 @@ function restoreCheckpoint(message) {
     const file = loaded.file, data = loaded.data;
     const conflicts = [];
     for (const entry of data.entries) {
-      const exists = fs.existsSync(entry.path);
-      const current = exists && fs.statSync(entry.path).isFile() ? fs.readFileSync(entry.path) : null;
-      const currentHash = current ? hashBytes(current) : 'NEW';
+      const currentHash = checkpointCurrentHash(entry.path);
       if (!entry.afterHash || currentHash !== entry.afterHash) conflicts.push(entry.path);
     }
     if (!data.sealed || conflicts.length) {
@@ -445,7 +449,7 @@ function restoreCheckpoint(message) {
       }
     }
     fs.renameSync(file, file + '.restored');
-    publish({ type: 'checkpoint_restore_result', checkpointId: data.id, restored: true, conflicts: [] });
+    publish({ type: 'checkpoint_restore_result', checkpointId: data.id, restored: true, conflicts: [], paths: data.entries.map(entry => entry.path) });
   } catch (error) {
     publish({ type: 'checkpoint_restore_result', checkpointId: message.checkpointId, restored: false, conflicts: [], error: error.message });
   }
@@ -486,7 +490,7 @@ function runGitAction(message) {
       const branches = gitRun(cwd, ['branch', '--format=%(refname:short)']);
       result = { code: branches.code, stdout: JSON.stringify({ current: current.stdout.trim(), branches: branches.stdout.split('\n').map(x => x.trim()).filter(Boolean) }), stderr: branches.stderr };
     } else if (action === 'diff') {
-      result = gitRun(cwd, ['diff', '--no-ext-diff', '--']);
+      result = gitRun(cwd, ['diff', 'HEAD', '--no-ext-diff', '--']);
     } else if (action === 'create_branch') {
       const name = String(message.name || '').trim();
       if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$/.test(name) || name.includes('..') || name.endsWith('/')) throw new Error('Invalid branch name.');
@@ -552,7 +556,8 @@ function buildRepositoryMap(message) {
         /^\s*import\s+['"]([^'"]+)['"]/,
         /^\s*from\s+([A-Za-z0-9_./-]+)\s+import\b/,
         /\brequire\(\s*['"]([^'"]+)['"]\s*\)/,
-        /^\s*import\s+([A-Za-z0-9_.*]+);/
+        /^\s*import\s+([A-Za-z0-9_.*]+);/,
+        /^\s*import\s+([A-Za-z0-9_.*]+)\b/
       ];
       for (let i = 0; i < lines.length; i++) {
         const symbolMatch = lines[i].match(symbolPattern);
