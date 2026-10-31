@@ -8,6 +8,8 @@ const [portArg, metricsPortArg, token, cliPath, home] = process.argv.slice(2);
 const PORT = Number(portArg || 37645);
 const METRICS_PORT = Number(metricsPortArg || 37646);
 const clients = new Set();
+const pendingToolRequests = new Map();
+const agentCheckpoints = new Map();
 const history = [];
 const HISTORY_LIMIT = 180;
 let child = null;
@@ -74,6 +76,20 @@ function forwardCliLine(line, streamName, processRef, partial = false) {
       const sessionId = parsed.session_id || parsed.sessionId || parsed.message?.session_id;
       if (typeof sessionId === 'string' && sessionId.length > 10) {
         currentSessionId = sessionId;
+      }
+      if (parsed.type === 'control_request' && parsed.request?.subtype === 'can_use_tool') {
+        const request = parsed.request;
+        pendingToolRequests.set(String(parsed.request_id), {
+          toolName: String(request.tool_name || ''),
+          input: request.input || {},
+          toolUseId: String(request.tool_use_id || '')
+        });
+        if (pendingToolRequests.size > 100) pendingToolRequests.delete(pendingToolRequests.keys().next().value);
+      }
+      if (parsed.type === 'user' && Array.isArray(parsed.message?.content)) {
+        for (const block of parsed.message.content) {
+          if (block?.type === 'tool_result' && block.tool_use_id) sealAgentCheckpoint(String(block.tool_use_id));
+        }
       }
       publish({ type: 'cli_event', stream: streamName, event: parsed, raw: line, sessionId: currentSessionId, title: currentTitle, cwd: currentCwd });
       return;
@@ -173,6 +189,18 @@ function writeToCli(message) {
     return;
   }
   if (message.type === 'control_response' && message.response) {
+    const response = message.response?.response;
+    const requestId = response?.request_id;
+    const allow = response?.behavior === 'allow';
+    if (allow && requestId) {
+      const prepared = approvedFilesystemTool(requestId);
+      if (!prepared.ok) {
+        publish({ type: 'agent_checkpoint_error', message: prepared.reason, requestId });
+        publish({ type: 'bridge_error', message: prepared.reason });
+        return;
+      }
+    }
+    if (requestId) pendingToolRequests.delete(String(requestId));
     child.stdin.write(JSON.stringify(message) + '\n');
   }
 }
@@ -251,6 +279,54 @@ function safeWorkspacePath(input, mustExist = true) {
   }
   return full;
 }
+
+function approvedFilesystemTool(requestId) {
+  const request = pendingToolRequests.get(String(requestId));
+  if (!request) return { ok: false, reason: 'Tool approval request is no longer available.' };
+  const name = request.toolName.toLowerCase();
+  if (!['write', 'edit', 'multiedit', 'notebookedit', 'createfile', 'filewrite'].includes(name)) {
+    pendingToolRequests.delete(String(requestId));
+    return { ok: true, checkpointId: null };
+  }
+  const input = request.input || {};
+  const inputPath = input.file_path || input.path || input.filePath || input.filename;
+  if (typeof inputPath !== 'string' || !inputPath.trim()) {
+    return { ok: false, reason: 'File-writing tool did not provide a recognized file path; approval was blocked because a safety checkpoint could not be created.' };
+  }
+  try {
+    const exists = fs.existsSync(inputPath);
+    const full = safeWorkspacePath(inputPath, exists);
+    const id = createFileCheckpoint(full, 'XINCLI agent ' + request.toolName);
+    const toolUseId = request.toolUseId;
+    if (!toolUseId) throw new Error('XINCLI tool-use ID was missing; safety checkpoint could not be attached.');
+    agentCheckpoints.set(toolUseId, { id, path: full, toolName: request.toolName });
+    pendingToolRequests.delete(String(requestId));
+    publish({ type: 'agent_checkpoint_created', checkpointId: id, path: full, toolName: request.toolName, toolUseId });
+    return { ok: true, checkpointId: id };
+  } catch (error) {
+    return { ok: false, reason: 'Could not create pre-edit safety checkpoint: ' + error.message };
+  }
+}
+
+function sealAgentCheckpoint(toolUseId) {
+  const item = agentCheckpoints.get(String(toolUseId));
+  if (!item) return;
+  try {
+    const exists = fs.existsSync(item.path);
+    const current = exists ? fs.readFileSync(item.path) : Buffer.alloc(0);
+    const loaded = loadCheckpoint(item.id);
+    const data = loaded.data;
+    data.entries[0].afterHash = exists ? hashBytes(current) : 'NEW';
+    data.sealed = true;
+    saveCheckpoint(item.id, data);
+    publish({ type: 'agent_checkpoint_saved', checkpointId: item.id, path: item.path, toolName: item.toolName });
+  } catch (error) {
+    publish({ type: 'agent_checkpoint_error', checkpointId: item.id, path: item.path, message: error.message });
+  } finally {
+    agentCheckpoints.delete(String(toolUseId));
+  }
+}
+
 function readFileForEditor(message) {
   try {
     const full = safeWorkspacePath(message.path, true);
