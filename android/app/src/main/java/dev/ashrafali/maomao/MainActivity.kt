@@ -375,7 +375,10 @@ private fun MaomaoApp() {
                     editorCheckpointId = null
                     if (activePreviewCheckpointId == latestAgentCheckpointId) { latestAgentCheckpointId = null; latestAgentCheckpointPath = null }
                     activePreviewCheckpointId = null
-                    editorPath?.let { bridge.send(BridgeProtocol.line("file_read", "path" to it)) }
+                    val restoredPaths = event.optJSONArray("paths")
+                    val editorWasRestored = editorPath != null && restoredPaths != null &&
+                        (0 until restoredPaths.length()).any { restoredPaths.optString(it) == editorPath }
+                    if (editorWasRestored) editorPath?.let { bridge.send(BridgeProtocol.line("file_read", "path" to it)) }
                     bridge.send(BridgeProtocol.line("files_list", "path" to filesPath))
                 }
             }
