@@ -177,9 +177,18 @@ private fun MaomaoApp() {
             "cli_event" -> {
                 val cliEvent = event.optJSONObject("event")
                 val id = event.optString("sessionId").takeIf { it.isNotBlank() && it != "null" }
-                if (id != null && id != currentSessionId) {
+                if (id != null) {
+                    val isNewSession = id != currentSessionId
                     currentSessionId = id
-                    if (chatStore.load(id).isEmpty()) entries.forEach { chatStore.append(id, it) }
+                    val sessionTitle = event.optString("title").takeIf { it.isNotBlank() && it != "null" }
+                        ?: currentSession?.title ?: "New chat"
+                    val sessionCwd = event.optString("cwd").takeIf { it.isNotBlank() && it != "null" } ?: cwd
+                    currentSession = ChatSession(
+                        id = id, title = sessionTitle, cwd = sessionCwd,
+                        updatedAt = System.currentTimeMillis(), interrupted = false
+                    )
+                    cwd = sessionCwd
+                    if (isNewSession && chatStore.load(id).isEmpty()) entries.forEach { chatStore.append(id, it) }
                     persistCurrent()
                 }
                 if (cliEvent != null) handleCliEvent(cliEvent, ::addEntry) { req -> permission = req }
