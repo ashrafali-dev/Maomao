@@ -99,7 +99,26 @@ private fun MaomaoApp() {
     var filesPath by remember { mutableStateOf(SessionStore.DEFAULT_CWD) }
     var files by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
     var fileError by remember { mutableStateOf<String?>(null) }
-    var gitOutput by remember { mutableStateOf("Tap refresh to read the current Git status.") }
+    var editorPath by remember { mutableStateOf<String?>(null) }
+    var editorText by remember { mutableStateOf("") }
+    var editorHash by remember { mutableStateOf("NEW") }
+    var editorError by remember { mutableStateOf<String?>(null) }
+    var editorCheckpointId by remember { mutableStateOf<String?>(null) }
+    var showFileEditor by remember { mutableStateOf(false) }
+    var gitOutput by remember { mutableStateOf("Open a Git repository to inspect status and manage branches.") }
+    var gitBranches by remember { mutableStateOf<List<String>>(emptyList()) }
+    var currentBranch by remember { mutableStateOf("") }
+    var diffText by remember { mutableStateOf("") }
+    var commitMessage by remember { mutableStateOf("Update project") }
+    var pendingGitAction by remember { mutableStateOf<String?>(null) }
+    var pendingGitValue by remember { mutableStateOf("") }
+    var repoMapFiles by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var repoMapSymbols by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var repoMapCount by remember { mutableStateOf(0) }
+    var showRepoMap by remember { mutableStateOf(false) }
+    var checkpointSafe by remember { mutableStateOf(false) }
+    var checkpointConflicts by remember { mutableStateOf<List<String>>(emptyList()) }
+    var showCheckpointPreview by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
     var lastSessionWasOom by remember { mutableStateOf(false) }
 
@@ -256,6 +275,81 @@ private fun MaomaoApp() {
                 val array = event.optJSONArray("entries")
                 files = if (array == null) emptyList() else (0 until array.length()).mapNotNull { array.optJSONObject(it) }
             }
+            "file_read_result" -> {
+                val error = event.optString("error").takeIf { it.isNotBlank() && it != "null" }
+                if (error != null) {
+                    editorError = error
+                    toast = error
+                } else {
+                    editorPath = event.optString("path")
+                    editorText = event.optString("content")
+                    editorHash = event.optString("hash", "NEW")
+                    editorError = null
+                    editorCheckpointId = null
+                    showFileEditor = true
+                }
+            }
+            "file_write_result" -> {
+                val error = event.optString("error").takeIf { it.isNotBlank() && it != "null" }
+                if (error != null) {
+                    editorError = error
+                    toast = error
+                } else {
+                    editorHash = event.optString("hash", editorHash)
+                    editorCheckpointId = event.optString("checkpointId").takeIf { it.isNotBlank() && it != "null" }
+                    editorError = null
+                    toast = "File saved. A pre-save checkpoint is available for safe undo."
+                    bridge.send(BridgeProtocol.line("files_list", "path" to filesPath))
+                }
+            }
+            "git_result" -> {
+                val action = event.optString("action")
+                val code = event.optInt("code", -1)
+                val stdout = event.optString("stdout")
+                val stderr = event.optString("stderr")
+                if (action == "branches" && code == 0) {
+                    val parsed = runCatching { JSONObject(stdout) }.getOrNull()
+                    currentBranch = parsed?.optString("current").orEmpty()
+                    val array = parsed?.optJSONArray("branches")
+                    gitBranches = if (array == null) emptyList() else (0 until array.length()).map { array.optString(it) }
+                } else if (action == "diff") {
+                    diffText = if (code == 0) stdout.ifBlank { "No unstaged changes." } else stderr
+                } else {
+                    gitOutput = if (code == 0) stdout.ifBlank { "Git $action completed." } else stderr.ifBlank { stdout.ifBlank { "Git $action failed (exit $code)." } }
+                    if (code == 0 && action in listOf("switch_branch", "create_branch", "commit", "pull", "fetch", "push")) {
+                        bridge.send(BridgeProtocol.line("git_action", "action" to "status", "cwd" to cwd))
+                        bridge.send(BridgeProtocol.line("git_action", "action" to "branches", "cwd" to cwd))
+                        bridge.send(BridgeProtocol.line("git_action", "action" to "diff", "cwd" to cwd))
+                    }
+                }
+                if (code != 0) toast = stderr.ifBlank { "Git $action failed." }
+            }
+            "repo_map_result" -> {
+                repoMapCount = event.optInt("fileCount")
+                val fa = event.optJSONArray("files")
+                val sa = event.optJSONArray("symbols")
+                repoMapFiles = if (fa == null) emptyList() else (0 until fa.length()).mapNotNull { fa.optJSONObject(it) }
+                repoMapSymbols = if (sa == null) emptyList() else (0 until sa.length()).mapNotNull { sa.optJSONObject(it) }
+                showRepoMap = true
+            }
+            "checkpoint_preview_result" -> {
+                checkpointSafe = event.optBoolean("safe")
+                val conflicts = event.optJSONArray("conflicts")
+                checkpointConflicts = if (conflicts == null) emptyList() else (0 until conflicts.length()).map { conflicts.optString(it) }
+                val error = event.optString("error").takeIf { it.isNotBlank() && it != "null" }
+                if (error != null) toast = error
+                showCheckpointPreview = true
+            }
+            "checkpoint_restore_result" -> {
+                val restored = event.optBoolean("restored")
+                showCheckpointPreview = false
+                toast = if (restored) "Undo completed. Original file content restored." else event.optString("error", "Undo blocked because the file changed.")
+                if (restored) {
+                    editorCheckpointId = null
+                    editorPath?.let { bridge.send(BridgeProtocol.line("file_read", "path" to it)) }
+                    bridge.send(BridgeProtocol.line("files_list", "path" to filesPath))
+                }
+            }
             "git_status" -> gitOutput = if (event.optInt("code") == 0) event.optString("stdout").ifBlank { "Working tree clean." } else event.optString("stderr").ifBlank { "Not a Git repository or Git could not run." }
         }
     }
@@ -334,6 +428,18 @@ private fun MaomaoApp() {
         if (session != null && prompt.isNullOrBlank()) status = "Restoring saved session…"
     }
 
+    fun sendGitAction(action: String, value: String = "", confirmed: Boolean = false) {
+        val request = JSONObject().apply {
+            put("type", "git_action")
+            put("action", action)
+            put("cwd", cwd)
+            put("confirmed", confirmed)
+            if (action == "commit") put("message", value)
+            else if (value.isNotBlank()) put("name", value)
+        }
+        bridge.send(request.toString() + "\n")
+    }
+
     LaunchedEffect(Unit) {
         connectBridge()
         val mostRecent = sessions.firstOrNull()
@@ -357,7 +463,9 @@ private fun MaomaoApp() {
             bridge.send(JSONObject().put("type", "files_list").put("path", filesPath).toString() + "\n")
         }
         if (connected && page == Page.GIT) {
-            bridge.send(JSONObject().put("type", "git_status").put("cwd", cwd).toString() + "\n")
+            sendGitAction("status")
+            sendGitAction("branches")
+            sendGitAction("diff")
         }
     }
 
@@ -442,15 +550,31 @@ private fun MaomaoApp() {
                     )
                     Page.FILES -> FilesScreen(
                         path = filesPath, entries = files, error = fileError,
-                        onLoad = { path -> bridge.send(JSONObject().put("type", "files_list").put("path", path).toString() + "\n") },
-                        onOpen = { name, isDirectory -> if (isDirectory) {
-                            val next = if (filesPath.endsWith('/')) filesPath + name else "$filesPath/$name"
-                            bridge.send(JSONObject().put("type", "files_list").put("path", next).toString() + "\n")
-                        } }
+                        onLoad = { path -> bridge.send(BridgeProtocol.line("files_list", "path" to path)) },
+                        onOpen = { name, isDirectory ->
+                            if (isDirectory) {
+                                val next = if (filesPath.endsWith('/')) filesPath + name else "$filesPath/$name"
+                                bridge.send(BridgeProtocol.line("files_list", "path" to next))
+                            }
+                        },
+                        onSelectFile = { name ->
+                            val full = if (filesPath.endsWith('/')) filesPath + name else "$filesPath/$name"
+                            bridge.send(BridgeProtocol.line("file_read", "path" to full))
+                        }
                     )
-                    Page.GIT -> GitScreen(cwd = cwd, output = gitOutput, onRefresh = {
-                        bridge.send(JSONObject().put("type", "git_status").put("cwd", cwd).toString() + "\n")
-                    })
+                    Page.GIT -> GitScreen(
+                        cwd = cwd, output = gitOutput, currentBranch = currentBranch, branches = gitBranches,
+                        diffText = diffText, commitMessage = commitMessage, onCommitMessage = { commitMessage = it },
+                        onRefresh = { sendGitAction("status"); sendGitAction("branches") },
+                        onDiff = { sendGitAction("diff") },
+                        onCreateBranch = { name -> sendGitAction("create_branch", name) },
+                        onSwitchBranch = { name -> pendingGitAction = "switch_branch"; pendingGitValue = name },
+                        onCommit = { pendingGitAction = "commit"; pendingGitValue = commitMessage },
+                        onFetch = { sendGitAction("fetch") },
+                        onPull = { pendingGitAction = "pull"; pendingGitValue = "" },
+                        onPush = { pendingGitAction = "push"; pendingGitValue = "" },
+                        onRepositoryMap = { bridge.send(BridgeProtocol.line("repo_map", "cwd" to cwd)) }
+                    )
                     Page.TERMINAL -> TerminalScreen(
                         command = terminalCommand, output = terminalOutput, blocked = memory.ratio >= 0.88,
                         onCommand = { terminalCommand = it },
@@ -479,6 +603,83 @@ private fun MaomaoApp() {
             }
         }
 
+        if (showFileEditor && editorPath != null) {
+            FileEditorDialog(
+                path = editorPath!!, content = editorText, error = editorError,
+                canUndo = editorCheckpointId != null,
+                onContent = { editorText = it },
+                onSave = {
+                    bridge.send(BridgeProtocol.line(
+                        "file_write", "path" to (editorPath ?: ""), "content" to editorText, "expectedHash" to editorHash
+                    ))
+                },
+                onUndo = {
+                    editorCheckpointId?.let { id ->
+                        bridge.send(BridgeProtocol.line("checkpoint_preview", "checkpointId" to id))
+                    }
+                },
+                onDismiss = { showFileEditor = false }
+            )
+        }
+        if (showCheckpointPreview) {
+            AlertDialog(
+                onDismissRequest = { showCheckpointPreview = false },
+                title = { Text(if (checkpointSafe) "Undo last save?" else "Undo blocked") },
+                text = {
+                    Text(if (checkpointSafe) {
+                        "The file still matches the saved version. Maomao can safely restore the exact pre-save bytes."
+                    } else {
+                        "The file has changed since the checkpoint or the checkpoint is invalid. Nothing will be overwritten. Conflicts: " + checkpointConflicts.joinToString()
+                    })
+                },
+                confirmButton = {
+                    if (checkpointSafe) TextButton(onClick = {
+                        editorCheckpointId?.let { bridge.send(BridgeProtocol.line("checkpoint_restore", "checkpointId" to it)) }
+                    }) { Text("Undo save") }
+                    else TextButton(onClick = { showCheckpointPreview = false }) { Text("Close") }
+                },
+                dismissButton = { if (checkpointSafe) TextButton(onClick = { showCheckpointPreview = false }) { Text("Cancel") } }
+            )
+        }
+        if (pendingGitAction != null) {
+            val action = pendingGitAction!!
+            val description = when (action) {
+                "commit" -> "This stages all current changes and creates a commit with message: " + pendingGitValue
+                "pull" -> "This runs git pull --ff-only. The operation is blocked if the working tree is dirty."
+                "push" -> "This pushes the current branch to its configured remote."
+                else -> "This switches the working tree to branch " + pendingGitValue + ". Dirty changes block the operation."
+            }
+            AlertDialog(
+                onDismissRequest = { pendingGitAction = null },
+                title = { Text("Confirm Git action") },
+                text = { Text(description) },
+                confirmButton = { TextButton(onClick = {
+                    sendGitAction(action, pendingGitValue, true)
+                    pendingGitAction = null
+                }) { Text("Confirm") } },
+                dismissButton = { TextButton(onClick = { pendingGitAction = null }) { Text("Cancel") } }
+            )
+        }
+        if (showRepoMap) {
+            AlertDialog(
+                onDismissRequest = { showRepoMap = false },
+                title = { Text("Repository Map · $repoMapCount files") },
+                text = {
+                    Column(Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                        Text("Key symbols", fontWeight = FontWeight.SemiBold)
+                        repoMapSymbols.take(120).forEach { item ->
+                            Text(item.optString("name") + " · " + item.optString("path") + ":" + item.optInt("line"), fontSize = 11.sp)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text("Source files", fontWeight = FontWeight.SemiBold)
+                        repoMapFiles.take(100).forEach { item ->
+                            Text(item.optString("path") + " · " + formatBytes(item.optLong("bytes")), fontSize = 11.sp)
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { showRepoMap = false }) { Text("Close") } }
+            )
+        }
         if (showHistory) {
             Dialog(onDismissRequest = { showHistory = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
                 Surface(Modifier.fillMaxWidth().fillMaxHeight(.88f).padding(14.dp), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
@@ -664,24 +865,28 @@ private fun MessageBubble(entry: ChatEntry) {
 }
 
 @Composable
-private fun FilesScreen(path: String, entries: List<JSONObject>, error: String?, onLoad: (String) -> Unit, onOpen: (String, Boolean) -> Unit) {
+private fun FilesScreen(
+    path: String, entries: List<JSONObject>, error: String?,
+    onLoad: (String) -> Unit, onOpen: (String, Boolean) -> Unit, onSelectFile: (String) -> Unit
+) {
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("Workspace files", fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Text(path, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row {
             TextButton(onClick = { onLoad(path) }) { Text("Refresh") }
             TextButton(onClick = { onLoad(SessionStore.DEFAULT_CWD) }) { Text("Termux home") }
-            TextButton(onClick = {
-                val parent = java.io.File(path).parent ?: SessionStore.DEFAULT_CWD
-                onLoad(parent)
-            }) { Text("Up") }
+            TextButton(onClick = { onLoad(java.io.File(path).parent ?: SessionStore.DEFAULT_CWD) }) { Text("Up") }
         }
+        Text("Tap a folder to browse or a text file to open the editor.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (error != null) StatusBanner(error, true)
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(entries, key = { it.optString("name") }) { item ->
                 val name = item.optString("name")
                 val dir = item.optBoolean("directory")
-                Surface(Modifier.fillMaxWidth().clickable { onOpen(name, dir) }, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(10.dp)) {
+                Surface(
+                    Modifier.fillMaxWidth().clickable { if (dir) onOpen(name, true) else onSelectFile(name) },
+                    color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(10.dp)
+                ) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(if (dir) Icons.Default.FolderOpen else Icons.Default.Terminal, null, tint = MaterialTheme.colorScheme.secondary)
                         Spacer(Modifier.width(10.dp))
@@ -695,15 +900,99 @@ private fun FilesScreen(path: String, entries: List<JSONObject>, error: String?,
 }
 
 @Composable
-private fun GitScreen(cwd: String, output: String, onRefresh: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
+private fun FileEditorDialog(
+    path: String, content: String, error: String?, canUndo: Boolean,
+    onContent: (String) -> Unit, onSave: () -> Unit, onUndo: () -> Unit, onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(java.io.File(path).name, fontSize = 18.sp)
+                Text(path, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                if (error != null) StatusBanner(error, true)
+                OutlinedTextField(
+                    value = content, onValueChange = onContent, modifier = Modifier.fillMaxWidth().heightIn(min = 280.dp, max = 520.dp),
+                    minLines = 14, maxLines = 24, textStyle = androidx.compose.ui.text.TextStyle(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp
+                    ),
+                    placeholder = { Text("File content") }
+                )
+                Text("1 MiB text editing limit · SHA-256 conflict check · automatic pre-save checkpoint",
+                    fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 5.dp))
+            }
+        },
+        confirmButton = { TextButton(onClick = onSave) { Text("Save") } },
+        dismissButton = {
+            Row {
+                if (canUndo) TextButton(onClick = onUndo) { Text("Undo last save") }
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
+        }
+    )
+}
+
+@Composable
+private fun GitScreen(
+    cwd: String, output: String, currentBranch: String, branches: List<String>, diffText: String,
+    commitMessage: String, onCommitMessage: (String) -> Unit,
+    onRefresh: () -> Unit, onDiff: () -> Unit, onCreateBranch: (String) -> Unit,
+    onSwitchBranch: (String) -> Unit, onCommit: () -> Unit, onFetch: () -> Unit,
+    onPull: () -> Unit, onPush: () -> Unit, onRepositoryMap: () -> Unit
+) {
+    var newBranch by remember { mutableStateOf("") }
+    var showBranches by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Text("Git workspace", fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Text(cwd, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Button(onClick = onRefresh, modifier = Modifier.padding(vertical = 10.dp)) { Text("Refresh status") }
-        Surface(Modifier.fillMaxWidth().weight(1f), color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
-            Text(output, Modifier.padding(14.dp), fontSize = 13.sp, lineHeight = 19.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Branch: " + currentBranch.ifBlank { "(detached / unknown)" }, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+            TextButton(onClick = { showBranches = true }) { Text("Switch") }
+            DropdownMenu(expanded = showBranches, onDismissRequest = { showBranches = false }) {
+                branches.forEach { branch ->
+                    DropdownMenuItem(text = { Text(branch) }, onClick = {
+                        showBranches = false
+                        if (branch != currentBranch) onSwitchBranch(branch)
+                    })
+                }
+            }
         }
-        Text("Git commit, branch switching and push controls are tracked for the next implementation stage.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(newBranch, { newBranch = it }, Modifier.weight(1f), label = { Text("New branch") }, singleLine = true)
+            Button(onClick = { val name = newBranch.trim(); if (name.isNotEmpty()) { onCreateBranch(name); newBranch = "" } }, enabled = newBranch.isNotBlank()) { Text("Create") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(commitMessage, onCommitMessage, Modifier.weight(1f), label = { Text("Commit message") }, singleLine = true)
+            Button(onClick = onCommit, enabled = commitMessage.isNotBlank()) { Text("Commit all") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            OutlinedButton(onClick = onRefresh) { Text("Status") }
+            OutlinedButton(onClick = onDiff) { Text("Diff") }
+            OutlinedButton(onClick = onRepositoryMap) { Text("Repo map") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            OutlinedButton(onClick = onFetch) { Text("Fetch") }
+            OutlinedButton(onClick = onPull) { Text("Pull") }
+            OutlinedButton(onClick = onPush) { Text("Push") }
+        }
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        Text("Git output", fontWeight = FontWeight.SemiBold)
+        Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
+            Text(output, Modifier.padding(12.dp), fontSize = 12.sp, lineHeight = 17.sp)
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("Unstaged diff", fontWeight = FontWeight.SemiBold)
+        Surface(Modifier.fillMaxWidth(), color = Color(0xFF090B10), shape = RoundedCornerShape(14.dp)) {
+            Text(diffText.ifBlank { "Tap Diff to inspect unstaged changes." },
+                Modifier.padding(12.dp), color = Color(0xFFD6E1F2), fontSize = 10.sp, lineHeight = 14.sp,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+        }
+        Text("Safety: switch and pull refuse dirty working trees. Commit stages all changes. Push, pull, switch and commit require confirmation.",
+            fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
     }
 }
 
