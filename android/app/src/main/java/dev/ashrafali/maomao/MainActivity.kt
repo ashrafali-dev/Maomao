@@ -480,6 +480,13 @@ private fun MaomaoApp() {
         bridge.send(request.toString() + "\n")
     }
 
+    LaunchedEffect(toast) {
+        toast?.let { message ->
+            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+            toast = null
+        }
+    }
+
     LaunchedEffect(Unit) {
         connectBridge()
         val mostRecent = sessions.firstOrNull()
