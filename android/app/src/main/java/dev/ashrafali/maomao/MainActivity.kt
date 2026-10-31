@@ -234,6 +234,11 @@ private fun MaomaoApp() {
                 toast = status
                 connecting = false
             }
+            "memory_guard_block" -> {
+                val message = event.optString("message", "New work was paused because memory is critical.")
+                toast = message
+                addEntry("system", message)
+            }
             "terminal_result" -> terminalOutput = buildString {
                 append("$ ").append(terminalCommand).append("\n")
                 append(event.optString("stdout"))
@@ -406,7 +411,9 @@ private fun MaomaoApp() {
                         entries = entries, input = input, onInput = { input = it },
                         onSend = {
                             val message = input.trim()
-                            if (message.isNotBlank()) {
+                            if (memory.ratio >= 0.88) {
+                                toast = "New prompts are paused at critical memory usage. Stop or wait for memory to fall."
+                            } else if (message.isNotBlank()) {
                                 input = ""
                                 if (currentSessionId == null && !isRunning) startOrResume(message, null)
                                 else startOrResume(message, currentSession, false)
@@ -437,7 +444,7 @@ private fun MaomaoApp() {
                         bridge.send(JSONObject().put("type", "git_status").put("cwd", cwd).toString() + "\n")
                     })
                     Page.TERMINAL -> TerminalScreen(
-                        command = terminalCommand, output = terminalOutput,
+                        command = terminalCommand, output = terminalOutput, blocked = memory.ratio >= 0.88,
                         onCommand = { terminalCommand = it },
                         onRun = {
                             if (terminalCommand.isNotBlank()) {
@@ -687,14 +694,14 @@ private fun GitScreen(cwd: String, output: String, onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun TerminalScreen(command: String, output: String, onCommand: (String) -> Unit, onRun: () -> Unit) {
+private fun TerminalScreen(command: String, output: String, blocked: Boolean, onCommand: (String) -> Unit, onRun: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("Termux terminal", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text("Commands run in your Termux user environment.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(if (blocked) "Terminal commands are paused until critical heap pressure falls." else "Commands run in your Termux user environment.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(command, onCommand, Modifier.weight(1f), placeholder = { Text("git status, ls, …") }, singleLine = true)
             Spacer(Modifier.width(8.dp))
-            Button(onClick = onRun) { Text("Run") }
+            Button(onClick = onRun, enabled = !blocked) { Text(if (blocked) "Paused" else "Run") }
         }
         Surface(Modifier.fillMaxWidth().weight(1f), color = Color(0xFF090B10), shape = RoundedCornerShape(14.dp)) {
             Text(output, Modifier.padding(12.dp), color = Color(0xFFB8E6C2), fontSize = 12.sp, lineHeight = 17.sp)
